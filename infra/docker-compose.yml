@@ -1,0 +1,14 @@
+version: "3.8"
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: infra/go.Dockerfile
+    ports:
+      - "8080:8080"
+  rust:
+    build:
+      context: ..
+      dockerfile: infra/rust.Dockerfile
+    depends_on:
+      - api

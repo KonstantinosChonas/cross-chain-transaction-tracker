@@ -1,0 +1,10 @@
+{
+  "name": "Cross-Chain Tracker Dev",
+  "image": "mcr.microsoft.com/vscode/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {},
+    "ghcr.io/devcontainers/features/go:1": {}
+  },
+  "workspaceFolder": "/workspace",
+  "postCreateCommand": "rustup --version && go version"
+}
