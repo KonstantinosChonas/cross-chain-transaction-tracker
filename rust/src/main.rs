@@ -30,7 +30,7 @@ struct Token {
     decimals: u8,
 }
 
-#[derive(Serialize, Debug, Serialize, Debug)]
+#[derive(Serialize, Debug)]
 struct Event {
     event_id: String,
     chain: String,
@@ -61,73 +61,96 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    if !cfg.eth_rpc_url.starts_with("ws") {
-        error!("This implementation requires a WebSocket RPC URL (e.g. wss://...)");
-        std::process::exit(1);
-    }
-    let provider_url = cfg.eth_rpc_url.clone();
-
-    let watched_addresses: Vec<Address> = cfg
-        .watched_addresses
-        .iter()
-        .map(|s| s.parse().unwrap())
-        .collect();
-
     let processed_txs: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
-    let last_block: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
+    let last_eth_block: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
+    let last_sol_slot: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
 
-    loop {
-        info!("Connecting to provider at {}", provider_url);
-        let ws = match Ws::connect(provider_url.clone()).await {
-            Ok(ws) => ws,
-            Err(e) => {
-                error!("Failed to connect WebSocket: {:?}. Retrying in 10s.", e);
-                sleep(Duration::from_secs(10)).await;
-                continue;
+    let eth_tracker = {
+        let cfg = cfg.clone();
+        let processed_txs = Arc::clone(&processed_txs);
+        let last_eth_block = Arc::clone(&last_eth_block);
+        tokio::spawn(async move {
+            if !cfg.eth_rpc_url.starts_with("ws") {
+                error!("ETH tracking requires a WebSocket RPC URL (e.g. wss://...)");
+                return;
             }
-        };
-        let provider = Arc::new(Provider::new(ws));
-        info!("Successfully connected to provider.");
+            loop {
+                info!("Connecting to ETH provider at {}", cfg.eth_rpc_url);
+                let ws = match Ws::connect(cfg.eth_rpc_url.clone()).await {
+                    Ok(ws) => ws,
+                    Err(e) => {
+                        error!("Failed to connect ETH WebSocket: {:?}. Retrying in 10s.", e);
+                        sleep(Duration::from_secs(10)).await;
+                        continue;
+                    }
+                };
+                let provider = Arc::new(Provider::new(ws));
+                info!("Successfully connected to ETH provider.");
 
-        let native_tracker = track_native_transfers(
-            Arc::clone(&provider),
-            watched_addresses.clone(),
-            cfg.network.clone(),
-            Arc::clone(&processed_txs),
-            Arc::clone(&last_block),
-        );
+                let watched_addresses: Vec<Address> = cfg
+                    .watched_addresses_eth
+                    .iter()
+                    .map(|s| s.parse().expect("Invalid ETH address"))
+                    .collect();
 
-        if watched_addresses.is_empty() {
-            warn!("No watched addresses for ERC-20 transfers. Tracking native transfers only.");
-            if let Err(e) = native_tracker.await {
-                warn!("Native transfer tracker failed: {}.", e);
+                let native_tracker = track_native_transfers(
+                    Arc::clone(&provider),
+                    watched_addresses.clone(),
+                    cfg.eth_network.clone(),
+                    Arc::clone(&processed_txs),
+                    Arc::clone(&last_eth_block),
+                );
+
+                if watched_addresses.is_empty() {
+                    warn!("No watched ETH addresses for ERC-20 transfers. Tracking native transfers only.");
+                    if let Err(e) = native_tracker.await {
+                        warn!("Native ETH transfer tracker failed: {}.", e);
+                    }
+                } else {
+                    let erc20_tracker = track_erc20_transfers(
+                        Arc::clone(&provider),
+                        watched_addresses.clone(),
+                        cfg.eth_network.clone(),
+                        Arc::clone(&processed_txs),
+                        Arc::clone(&last_eth_block),
+                    );
+
+                    tokio::select! {
+                        res = erc20_tracker => {
+                            if let Err(e) = res {
+                                warn!("ERC-20 tracker failed: {}.", e);
+                            }
+                        },
+                        res = native_tracker => {
+                            if let Err(e) = res {
+                                warn!("Native ETH transfer tracker failed: {}.", e);
+                            }
+                        },
+                    }
+                }
+                warn!("An ETH tracker task has finished. Restarting trackers after 5s delay.");
+                sleep(Duration::from_secs(5)).await;
             }
-        } else {
-            let erc20_tracker = track_erc20_transfers(
-                Arc::clone(&provider),
-                watched_addresses.clone(),
-                cfg.network.clone(),
+        })
+    };
+
+    let sol_tracker = {
+        let cfg = cfg.clone();
+        tokio::spawn(async move {
+            track_solana_transfers(
+                &cfg.sol_rpc_url,
+                &cfg.sol_network,
+                &cfg.watched_addresses_sol,
                 Arc::clone(&processed_txs),
-                Arc::clone(&last_block),
-            );
+                Arc::clone(&last_sol_slot),
+            )
+            .await
+        })
+    };
 
-            tokio::select! {
-                res = erc20_tracker => {
-                    if let Err(e) = res {
-                        warn!("ERC-20 tracker failed: {}.", e);
-                    }
-                },
-                res = native_tracker => {
-                    if let Err(e) = res {
-                        warn!("Native transfer tracker failed: {}.", e);
-                    }
-                },
-            }
-        }
+    tokio::try_join!(eth_tracker, sol_tracker)?;
 
-        warn!("A tracker task has finished. Restarting trackers after 5s delay.");
-        sleep(Duration::from_secs(5)).await;
-    }
+    Ok(())
 }
 
 async fn track_erc20_transfers(
@@ -190,7 +213,7 @@ async fn track_erc20_transfers(
                         let current_bn = bn.as_u64();
                         if last.is_none() || current_bn > last.unwrap() {
                             *last = Some(current_bn);
-                            info!("Updated last processed block to: {}", current_bn);
+                            info!("Updated last processed ETH block to: {}", current_bn);
                         }
                     }
                 }
@@ -276,6 +299,8 @@ async fn subscribe_to_solana_transfers(
     ws_url: &str,
     network: &str,
     watched_addresses: &[Pubkey],
+    processed_txs: Arc<Mutex<HashSet<String>>>,
+    last_slot: Arc<Mutex<Option<u64>>>,
 ) -> anyhow::Result<()> {
     let pubsub_client = PubsubClient::new(ws_url).await?;
     let rpc_url = ws_url.replace("ws:", "http:").replace("wss:", "https:");
@@ -287,6 +312,8 @@ async fn subscribe_to_solana_transfers(
         let pubkey = *address;
         let network = network.to_string();
         let rpc_client = rpc_client.clone();
+        let processed_txs = Arc::clone(&processed_txs);
+        let last_slot = Arc::clone(&last_slot);
         let (mut subscription, _) = pubsub_client
             .logs_subscribe(
                 RpcLogsFilter::Mentions(vec![pubkey.to_string()]),
@@ -299,9 +326,16 @@ async fn subscribe_to_solana_transfers(
         tokio::spawn(async move {
             info!("Listening for logs mentioning {}", pubkey);
             while let Some(log_info) = subscription.next().await {
-                let signature = log_info.value.signature;
-                if let Err(e) =
-                    process_solana_transaction(&rpc_client, &network, signature, &pubkey).await
+                let signature = log_info.value.signature.clone();
+                if let Err(e) = process_solana_transaction(
+                    &rpc_client,
+                    &network,
+                    signature,
+                    &pubkey,
+                    Arc::clone(&processed_txs),
+                    Arc::clone(&last_slot),
+                )
+                .await
                 {
                     warn!(
                         "Failed to process solana tx {}: {:?}",
@@ -320,7 +354,15 @@ async fn process_solana_transaction(
     network: &str,
     signature: String,
     watched_address: &Pubkey,
+    processed_txs: Arc<Mutex<HashSet<String>>>,
+    last_slot: Arc<Mutex<Option<u64>>>,
 ) -> anyhow::Result<()> {
+    let event_id = format!("sol:{}", signature);
+    if processed_txs.lock().await.contains(&event_id) {
+        info!("Duplicate event skipped: {}", event_id);
+        return Ok(());
+    }
+
     let sig = Signature::from_str(&signature)?;
     let tx = rpc_client
         .get_transaction_with_config(
@@ -328,12 +370,12 @@ async fn process_solana_transaction(
             RpcTransactionConfig {
                 encoding: Some(UiTransactionEncoding::JsonParsed),
                 commitment: Some(CommitmentConfig::confirmed()),
-                max_supported_transaction_version: Some(0),
+                max_supported_transaction_version: None,
             },
         )
         .await?;
 
-    if let Some(tx_with_meta) = tx.transaction {
+    if let Some(tx_with_meta) = tx.transaction.clone() {
         let slot = tx_with_meta.slot;
         let block_time = tx_with_meta.block_time.unwrap_or(0);
         let timestamp = chrono::DateTime::from_timestamp(block_time, 0)
@@ -360,7 +402,7 @@ async fn process_solana_transaction(
                                 || &Pubkey::from_str(&info.destination)? == watched_address
                             {
                                 let event = Event {
-                                    event_id: format!("sol:{}", signature),
+                                    event_id: event_id.clone(),
                                     chain: "solana".into(),
                                     network: network.to_string(),
                                     tx_hash: signature.clone(),
@@ -374,6 +416,7 @@ async fn process_solana_transaction(
                                 };
                                 if let Ok(event_json) = serde_json::to_string(&event) {
                                     println!("{}", event_json);
+                                    processed_txs.lock().await.insert(event_id.clone());
                                 }
                             }
                         }
@@ -393,19 +436,19 @@ async fn process_solana_transaction(
                                     parsed_instruction,
                                 ),
                             ),
-                        ) = instruction.parsed
+                        ) = &instruction.parsed
                         {
                             if parsed_instruction.instruction_type == "transfer" {
                                 if let Ok(info) = serde_json::from_value::<
                                     solana_transaction_status::parse_token::Transfer,
                                 >(
-                                    parsed_instruction.info
+                                    parsed_instruction.info.clone()
                                 ) {
                                     if &Pubkey::from_str(&info.source)? == watched_address
                                         || &Pubkey::from_str(&info.destination)? == watched_address
                                     {
                                         let event = Event {
-                                            event_id: format!("sol:{}", signature),
+                                            event_id: event_id.clone(),
                                             chain: "solana".into(),
                                             network: network.to_string(),
                                             tx_hash: signature.clone(),
@@ -423,6 +466,7 @@ async fn process_solana_transaction(
                                         };
                                         if let Ok(event_json) = serde_json::to_string(&event) {
                                             println!("{}", event_json);
+                                            processed_txs.lock().await.insert(event_id.clone());
                                         }
                                     }
                                 }
@@ -434,5 +478,51 @@ async fn process_solana_transaction(
         }
     }
 
+    if let Some(tx_with_meta) = tx.transaction {
+        let mut last = last_slot.lock().await;
+        let current_slot = tx_with_meta.slot;
+        if last.is_none() || current_slot > last.unwrap() {
+            *last = Some(current_slot);
+            info!("Updated last processed SOL slot to: {}", current_slot);
+        }
+    }
+
     Ok(())
+}
+
+async fn track_solana_transfers(
+    ws_url: &str,
+    network: &str,
+    watched_addresses_str: &[String],
+    processed_txs: Arc<Mutex<HashSet<String>>>,
+    last_slot: Arc<Mutex<Option<u64>>>,
+) {
+    if watched_addresses_str.is_empty() {
+        info!("No Solana addresses to watch.");
+        return;
+    }
+    if !ws_url.starts_with("ws") {
+        error!("SOL tracking requires a WebSocket URL (e.g. wss://...)");
+        return;
+    }
+    let watched_addresses: Vec<Pubkey> = watched_addresses_str
+        .iter()
+        .map(|s| Pubkey::from_str(s).expect("Invalid Solana address"))
+        .collect();
+
+    loop {
+        match subscribe_to_solana_transfers(
+            ws_url,
+            network,
+            &watched_addresses,
+            Arc::clone(&processed_txs),
+            Arc::clone(&last_slot),
+        )
+        .await
+        {
+            Ok(_) => info!("Solana subscription stream ended. This should not happen."),
+            Err(e) => error!("Solana subscription failed: {:?}. Reconnecting...", e),
+        }
+        sleep(Duration::from_secs(5)).await;
+    }
 }
