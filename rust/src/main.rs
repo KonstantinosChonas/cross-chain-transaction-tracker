@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use redis::AsyncCommands;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -22,6 +23,16 @@ use solana_transaction_status::UiTransactionEncoding;
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 mod config;
+
+
+async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> anyhow::Result<()> {
+    let mut con = redis_client.get_async_connection().await?;
+    let payload = serde_json::to_string(event)?;
+    con.publish("cross_chain_events", payload).await?;
+    info!("Published event to Redis: {}", event.event_id);
+    Ok(())
+}
+
 
 #[derive(Serialize, Debug)]
 struct Token {
@@ -61,6 +72,8 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    let redis_client = redis::Client::open(cfg.redis_url.clone())?;
+
     let processed_txs: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
     let last_eth_block: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
     let last_sol_slot: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
@@ -69,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         let cfg = cfg.clone();
         let processed_txs = Arc::clone(&processed_txs);
         let last_eth_block = Arc::clone(&last_eth_block);
+        let redis_client = redis_client.clone();
         tokio::spawn(async move {
             if !cfg.eth_rpc_url.starts_with("ws") {
                 error!("ETH tracking requires a WebSocket RPC URL (e.g. wss://...)");
@@ -99,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
                     cfg.eth_network.clone(),
                     Arc::clone(&processed_txs),
                     Arc::clone(&last_eth_block),
+                    redis_client.clone(),
                 );
 
                 if watched_addresses.is_empty() {
@@ -113,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
                         cfg.eth_network.clone(),
                         Arc::clone(&processed_txs),
                         Arc::clone(&last_eth_block),
+                        redis_client.clone(),
                     );
 
                     tokio::select! {
@@ -136,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
 
     let sol_tracker = {
         let cfg = cfg.clone();
+        let redis_client = redis_client.clone();
         tokio::spawn(async move {
             track_solana_transfers(
                 &cfg.sol_rpc_url,
@@ -143,6 +160,7 @@ async fn main() -> anyhow::Result<()> {
                 &cfg.watched_addresses_sol,
                 Arc::clone(&processed_txs),
                 Arc::clone(&last_sol_slot),
+                redis_client,
             )
             .await
         })
@@ -159,6 +177,7 @@ async fn track_erc20_transfers(
     network: String,
     processed_txs: Arc<Mutex<HashSet<String>>>,
     last_block: Arc<Mutex<Option<u64>>>,
+    redis_client: redis::Client,
 ) -> anyhow::Result<()> {
     let filter = Filter::new().event("Transfer(address,address,uint256)");
     let mut stream = provider.subscribe_logs(&filter).await?;
@@ -204,17 +223,17 @@ async fn track_erc20_transfers(
                     token: None,
                 };
 
-                if let Ok(event_json) = serde_json::to_string(&event) {
-                    println!("{}", event_json);
-                    processed_txs.lock().await.insert(event_id);
+                if let Err(e) = publish_event_to_redis(&redis_client, &event).await {
+                    error!("Failed to publish event to Redis: {:?}", e);
+                }
+                processed_txs.lock().await.insert(event_id);
 
-                    if let Some(bn) = block_number {
-                        let mut last = last_block.lock().await;
-                        let current_bn = bn.as_u64();
-                        if last.is_none() || current_bn > last.unwrap() {
-                            *last = Some(current_bn);
-                            info!("Updated last processed ETH block to: {}", current_bn);
-                        }
+                if let Some(bn) = block_number {
+                    let mut last = last_block.lock().await;
+                    let current_bn = bn.as_u64();
+                    if last.is_none() || current_bn > last.unwrap() {
+                        *last = Some(current_bn);
+                        info!("Updated last processed ETH block to: {}", current_bn);
                     }
                 }
             }
@@ -230,6 +249,7 @@ async fn track_native_transfers(
     network: String,
     processed_txs: Arc<Mutex<HashSet<String>>>,
     last_block: Arc<Mutex<Option<u64>>>,
+    redis_client: redis::Client,
 ) -> anyhow::Result<()> {
     let mut stream = provider.subscribe_blocks().await?;
     info!("Subscribed to new blocks for native transfers");
@@ -266,10 +286,10 @@ async fn track_native_transfers(
                                 slot: None,
                                 token: None,
                             };
-                            if let Ok(event_json) = serde_json::to_string(&event) {
-                                println!("{}", event_json);
-                                processed_txs.lock().await.insert(event_id);
+                            if let Err(e) = publish_event_to_redis(&redis_client, &event).await {
+                                error!("Failed to publish event to Redis: {:?}", e);
                             }
+                            processed_txs.lock().await.insert(event_id);
                         }
                     }
                     let mut last = last_block.lock().await;
@@ -301,6 +321,7 @@ async fn subscribe_to_solana_transfers(
     watched_addresses: &[Pubkey],
     processed_txs: Arc<Mutex<HashSet<String>>>,
     last_slot: Arc<Mutex<Option<u64>>>,
+    redis_client: redis::Client,
 ) -> anyhow::Result<()> {
     let pubsub_client = PubsubClient::new(ws_url).await?;
     let rpc_url = ws_url.replace("ws:", "http:").replace("wss:", "https:");
@@ -314,6 +335,7 @@ async fn subscribe_to_solana_transfers(
         let rpc_client = rpc_client.clone();
         let processed_txs = Arc::clone(&processed_txs);
         let last_slot = Arc::clone(&last_slot);
+        let redis_client = redis_client.clone();
         let (mut subscription, _) = pubsub_client
             .logs_subscribe(
                 RpcLogsFilter::Mentions(vec![pubkey.to_string()]),
@@ -334,6 +356,7 @@ async fn subscribe_to_solana_transfers(
                     &pubkey,
                     Arc::clone(&processed_txs),
                     Arc::clone(&last_slot),
+                    &redis_client,
                 )
                 .await
                 {
@@ -356,6 +379,7 @@ async fn process_solana_transaction(
     watched_address: &Pubkey,
     processed_txs: Arc<Mutex<HashSet<String>>>,
     last_slot: Arc<Mutex<Option<u64>>>,
+    redis_client: &redis::Client,
 ) -> anyhow::Result<()> {
     let event_id = format!("sol:{}", signature);
     if processed_txs.lock().await.contains(&event_id) {
@@ -414,10 +438,10 @@ async fn process_solana_transaction(
                                     slot: Some(slot),
                                     token: None,
                                 };
-                                if let Ok(event_json) = serde_json::to_string(&event) {
-                                    println!("{}", event_json);
-                                    processed_txs.lock().await.insert(event_id.clone());
+                                if let Err(e) = publish_event_to_redis(redis_client, &event).await {
+                                    error!("Failed to publish event to Redis: {:?}", e);
                                 }
+                                processed_txs.lock().await.insert(event_id.clone());
                             }
                         }
                     }
@@ -464,10 +488,13 @@ async fn process_solana_transaction(
                                                 decimals: info.decimals.unwrap_or(0),
                                             }),
                                         };
-                                        if let Ok(event_json) = serde_json::to_string(&event) {
-                                            println!("{}", event_json);
-                                            processed_txs.lock().await.insert(event_id.clone());
+                                        if let Err(e) =
+                                            publish_event_to_redis(redis_client, &event).await
+                                        {
+                                            error!("Failed to publish event to Redis: {:?}", e);
                                         }
+                                        processed_txs.lock().await.insert(event_id.clone());
+                                        
                                     }
                                 }
                             }
@@ -496,6 +523,7 @@ async fn track_solana_transfers(
     watched_addresses_str: &[String],
     processed_txs: Arc<Mutex<HashSet<String>>>,
     last_slot: Arc<Mutex<Option<u64>>>,
+    redis_client: redis::Client,
 ) {
     if watched_addresses_str.is_empty() {
         info!("No Solana addresses to watch.");
@@ -517,6 +545,7 @@ async fn track_solana_transfers(
             &watched_addresses,
             Arc::clone(&processed_txs),
             Arc::clone(&last_slot),
+            redis_client.clone(),
         )
         .await
         {

@@ -5,6 +5,7 @@ use dotenvy::dotenv;
 pub struct Config {
     pub eth_rpc_url: String,
     pub sol_rpc_url: String,
+    pub redis_url: String,
     pub watched_addresses_eth: Vec<String>,
     pub watched_addresses_sol: Vec<String>,
     pub eth_network: String,
@@ -19,7 +20,7 @@ impl Config {
 
         let eth_rpc_url = std::env::var("ETH_RPC_URL").context("ETH_RPC_URL must be set")?;
         let sol_rpc_url = std::env::var("SOL_RPC_URL").context("SOL_RPC_URL must be set")?;
-
+        let redis_url = std::env::var("REDIS_URL").context("REDIS_URL must be set")?;
         let watched_addresses_eth = std::env::var("WATCHED_ADDRESSES_ETH")
             .map(|s| {
                 if s.is_empty() {
@@ -53,6 +54,7 @@ impl Config {
         Ok(Config {
             eth_rpc_url,
             sol_rpc_url,
+            redis_url,
             watched_addresses_eth,
             watched_addresses_sol,
             eth_network,
