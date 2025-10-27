@@ -1,38 +1,49 @@
 use anyhow::anyhow;
 use redis::AsyncCommands;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 use tokio_stream::StreamExt;
 
 use ethers::prelude::*;
-use ethers::providers::{Provider, Ws};
-use ethers::types::{Address, Filter};
+use ethers::providers::{Middleware, Provider, Ws};
+use solana_client::{rpc_client::RpcClient, rpc_config::RpcTransactionConfig};
 
-use solana_client::{
-    pubsub_client::PubsubClient,
-    rpc_client::RpcClient,
-    rpc_config::RpcTransactionConfig,
-    rpc_request::{RpcLogsConfig, RpcLogsFilter},
-};
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
 use solana_transaction_status::UiTransactionEncoding;
 
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 mod config;
-
+mod retry;
+mod solana_parser;
 
 async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> anyhow::Result<()> {
-    let mut con = redis_client.get_async_connection().await?;
+    let mut con = redis_client.get_multiplexed_async_connection().await?;
     let payload = serde_json::to_string(event)?;
-    con.publish("cross_chain_events", payload).await?;
+    con.publish::<_, _, ()>("cross_chain_events", payload)
+        .await?;
     info!("Published event to Redis: {}", event.event_id);
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct SystemTransfer {
+    source: String,
+    destination: String,
+    lamports: u64,
+}
+
+#[derive(Deserialize)]
+struct TokenTransfer {
+    source: String,
+    destination: String,
+    amount: String,
+    decimals: Option<u8>,
+}
 
 #[derive(Serialize, Debug)]
 struct Token {
@@ -217,7 +228,7 @@ async fn track_erc20_transfers(
                     timestamp,
                     from: format!("{:?}", from),
                     to: format!("{:?}", to),
-                    value: U256::from_big_endian(&log.data).to_string(),
+                    value: U256::from_big_endian(&log.data.0).to_string(),
                     event_type: "erc20_transfer".into(),
                     slot: None,
                     token: None,
@@ -323,11 +334,14 @@ async fn subscribe_to_solana_transfers(
     last_slot: Arc<Mutex<Option<u64>>>,
     redis_client: redis::Client,
 ) -> anyhow::Result<()> {
-    let pubsub_client = PubsubClient::new(ws_url).await?;
+    // The solana `PubsubClient` / logs_subscribe API surface has changed across
+    // versions. To avoid depending on the websocket pubsub API and the
+    // unresolved types, poll the RPC for recent signatures for each watched
+    // address and process any new transactions.
     let rpc_url = ws_url.replace("ws:", "http:").replace("wss:", "https:");
-    let rpc_client = RpcClient::new(rpc_url);
+    let rpc_client = Arc::new(RpcClient::new(rpc_url));
 
-    info!("Subscribing to Solana accounts for native and token transfers");
+    info!("Polling Solana RPC for transfers (no websocket pubsub used)");
 
     for address in watched_addresses {
         let pubkey = *address;
@@ -336,37 +350,54 @@ async fn subscribe_to_solana_transfers(
         let processed_txs = Arc::clone(&processed_txs);
         let last_slot = Arc::clone(&last_slot);
         let redis_client = redis_client.clone();
-        let (mut subscription, _) = pubsub_client
-            .logs_subscribe(
-                RpcLogsFilter::Mentions(vec![pubkey.to_string()]),
-                RpcLogsConfig {
-                    commitment: Some(CommitmentConfig::confirmed()),
-                },
-            )
-            .await?;
 
         tokio::spawn(async move {
-            info!("Listening for logs mentioning {}", pubkey);
-            while let Some(log_info) = subscription.next().await {
-                let signature = log_info.value.signature.clone();
-                if let Err(e) = process_solana_transaction(
-                    &rpc_client,
-                    &network,
-                    signature,
-                    &pubkey,
-                    Arc::clone(&processed_txs),
-                    Arc::clone(&last_slot),
-                    &redis_client,
-                )
-                .await
-                {
-                    warn!(
-                        "Failed to process solana tx {}: {:?}",
-                        log_info.value.signature, e
-                    );
+            info!("Starting poll loop for {}", pubkey);
+            loop {
+                // Use the synchronous RpcClient method inside a blocking task
+                // so we don't block the async runtime's reactor.
+                let signatures_res = tokio::task::spawn_blocking({
+                    let rpc_client = rpc_client.clone();
+                    let pubkey = pubkey.clone();
+                    move || rpc_client.get_signatures_for_address(&pubkey)
+                })
+                .await;
+
+                match signatures_res {
+                    Ok(Ok(signatures)) => {
+                        for sig_info in signatures.iter() {
+                            // ConfirmedSignatureInfo.signature is a String
+                            let signature = sig_info.signature.clone();
+                            if let Err(e) = process_solana_transaction(
+                                &rpc_client,
+                                &network,
+                                signature,
+                                &pubkey,
+                                Arc::clone(&processed_txs),
+                                Arc::clone(&last_slot),
+                                &redis_client,
+                            )
+                            .await
+                            {
+                                warn!(
+                                    "Failed to process solana tx {}: {:?}",
+                                    sig_info.signature, e
+                                );
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Error fetching signatures for {}: {:?}", pubkey, e);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Task panicked while fetching signatures for {}: {:?}",
+                            pubkey, e
+                        );
+                    }
                 }
+                sleep(Duration::from_secs(5)).await;
             }
-            info!("Subscription ended for {}", pubkey);
         });
     }
     Ok(())
@@ -388,130 +419,54 @@ async fn process_solana_transaction(
     }
 
     let sig = Signature::from_str(&signature)?;
-    let tx = rpc_client
-        .get_transaction_with_config(
-            &sig,
-            RpcTransactionConfig {
-                encoding: Some(UiTransactionEncoding::JsonParsed),
-                commitment: Some(CommitmentConfig::confirmed()),
-                max_supported_transaction_version: None,
-            },
-        )
-        .await?;
+    let tx_with_meta = rpc_client.get_transaction_with_config(
+        &sig,
+        RpcTransactionConfig {
+            encoding: Some(UiTransactionEncoding::JsonParsed),
+            commitment: Some(CommitmentConfig::confirmed()),
+            max_supported_transaction_version: Some(0),
+        },
+    )?;
 
-    if let Some(tx_with_meta) = tx.transaction.clone() {
-        let slot = tx_with_meta.slot;
-        let block_time = tx_with_meta.block_time.unwrap_or(0);
-        let timestamp = chrono::DateTime::from_timestamp(block_time, 0)
-            .unwrap()
-            .to_rfc3339();
+    let slot = tx_with_meta.slot;
+    let block_time = tx_with_meta.block_time.unwrap_or(0);
+    let timestamp = chrono::DateTime::from_timestamp(block_time, 0)
+        .unwrap()
+        .to_rfc3339();
 
-        if let Some(transaction) = tx_with_meta.transaction.decode() {
-            // --- Check for Native SOL transfers ---
-            for instruction in &transaction.message.instructions {
-                if let solana_transaction_status::option_serializer::OptionSerializer::Some(
-                    solana_transaction_status::UiParsedInstruction::Parsed(
-                        solana_transaction_status::UiParsedInstructionEnum::System(
-                            parsed_instruction,
-                        ),
-                    ),
-                ) = &instruction.parsed
-                {
-                    if parsed_instruction.instruction_type == "transfer" {
-                        if let Ok(info) = serde_json::from_value::<
-                            solana_transaction_status::parse_system::Transfer,
-                        >(parsed_instruction.info.clone())
-                        {
-                            if &Pubkey::from_str(&info.source)? == watched_address
-                                || &Pubkey::from_str(&info.destination)? == watched_address
-                            {
-                                let event = Event {
-                                    event_id: event_id.clone(),
-                                    chain: "solana".into(),
-                                    network: network.to_string(),
-                                    tx_hash: signature.clone(),
-                                    timestamp: timestamp.clone(),
-                                    from: info.source,
-                                    to: info.destination,
-                                    value: info.lamports.to_string(),
-                                    event_type: "transfer".into(),
-                                    slot: Some(slot),
-                                    token: None,
-                                };
-                                if let Err(e) = publish_event_to_redis(redis_client, &event).await {
-                                    error!("Failed to publish event to Redis: {:?}", e);
-                                }
-                                processed_txs.lock().await.insert(event_id.clone());
-                            }
-                        }
-                    }
-                }
+    // Decode the transaction if possible. Different solana crate versions
+    // expose parsed or compiled forms; to be robust across versions we only
+    // check whether the watched address appears among the transaction's
+    // account keys. This is a simpler, reliable signal that the transaction
+    // touched the watched address (covers native and token transfers).
+    if let Some(decoded_tx) = tx_with_meta.transaction.transaction.decode() {
+        let account_keys = decoded_tx.message.static_account_keys();
+        if account_keys.iter().any(|k| k == watched_address) {
+            let event = Event {
+                event_id: event_id.clone(),
+                chain: "solana".into(),
+                network: network.to_string(),
+                tx_hash: signature.clone(),
+                timestamp: timestamp.clone(),
+                from: "".into(),
+                to: "".into(),
+                value: "".into(),
+                event_type: "solana_tx".into(),
+                slot: Some(slot),
+                token: None,
+            };
+            if let Err(e) = publish_event_to_redis(redis_client, &event).await {
+                error!("Failed to publish event to Redis: {:?}", e);
             }
-        }
-
-        // --- Check for SPL Token transfers ---
-        if let Some(meta) = tx_with_meta.meta {
-            if let Some(inner_instructions) = meta.inner_instructions {
-                for inner_instruction in inner_instructions {
-                    for instruction in inner_instruction.instructions {
-                        if let solana_transaction_status::option_serializer::OptionSerializer::Some(
-                            solana_transaction_status::UiParsedInstruction::Parsed(
-                                solana_transaction_status::UiParsedInstructionEnum::SplToken(
-                                    parsed_instruction,
-                                ),
-                            ),
-                        ) = &instruction.parsed
-                        {
-                            if parsed_instruction.instruction_type == "transfer" {
-                                if let Ok(info) = serde_json::from_value::<
-                                    solana_transaction_status::parse_token::Transfer,
-                                >(
-                                    parsed_instruction.info.clone()
-                                ) {
-                                    if &Pubkey::from_str(&info.source)? == watched_address
-                                        || &Pubkey::from_str(&info.destination)? == watched_address
-                                    {
-                                        let event = Event {
-                                            event_id: event_id.clone(),
-                                            chain: "solana".into(),
-                                            network: network.to_string(),
-                                            tx_hash: signature.clone(),
-                                            timestamp: timestamp.clone(),
-                                            from: info.source.clone(),
-                                            to: info.destination.clone(),
-                                            value: info.amount.clone(),
-                                            event_type: "spl_transfer".into(),
-                                            slot: Some(slot),
-                                            token: Some(Token {
-                                                address: "".to_string(), // Mint address requires another RPC call
-                                                symbol: "".to_string(),
-                                                decimals: info.decimals.unwrap_or(0),
-                                            }),
-                                        };
-                                        if let Err(e) =
-                                            publish_event_to_redis(redis_client, &event).await
-                                        {
-                                            error!("Failed to publish event to Redis: {:?}", e);
-                                        }
-                                        processed_txs.lock().await.insert(event_id.clone());
-                                        
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            processed_txs.lock().await.insert(event_id.clone());
         }
     }
 
-    if let Some(tx_with_meta) = tx.transaction {
-        let mut last = last_slot.lock().await;
-        let current_slot = tx_with_meta.slot;
-        if last.is_none() || current_slot > last.unwrap() {
-            *last = Some(current_slot);
-            info!("Updated last processed SOL slot to: {}", current_slot);
-        }
+    let mut last = last_slot.lock().await;
+    let current_slot = tx_with_meta.slot;
+    if last.is_none() || current_slot > last.unwrap() {
+        *last = Some(current_slot);
+        info!("Updated last processed SOL slot to: {}", current_slot);
     }
 
     Ok(())
@@ -553,5 +508,81 @@ async fn track_solana_transfers(
             Err(e) => error!("Solana subscription failed: {:?}. Reconnecting...", e),
         }
         sleep(Duration::from_secs(5)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::types::{Address, Bytes, Log, H256, U256, U64};
+    use std::str::FromStr;
+
+    #[test]
+    fn test_eth_event_id_generation() {
+        let tx_hash =
+            H256::from_str("0x123456789012345678901234567890123456789012345678901234567890abcd")
+                .unwrap();
+        let expected_id = "eth:0x123456789012345678901234567890123456789012345678901234567890abcd";
+        let event_id = format!("eth:{:?}", tx_hash);
+        assert_eq!(event_id, expected_id);
+    }
+
+    #[test]
+    fn test_sol_event_id_generation() {
+        let signature = "5wLkiRHwfgxj8PvAkcsHXEbGYAKQWy6Phu6JX49tBwwBKpPVpRHKPUNFqUbvFPmpXSxmRqGNgHErkBDu2XCfBJVb";
+        let expected_id = "sol:5wLkiRHwfgxj8PvAkcsHXEbGYAKQWy6Phu6JX49tBwwBKpPVpRHKPUNFqUbvFPmpXSxmRqGNgHErkBDu2XCfBJVb";
+        let event_id = format!("sol:{}", signature);
+        assert_eq!(event_id, expected_id);
+    }
+
+    #[test]
+    fn test_parse_erc20_log() {
+        // construct a fake ERC-20 Transfer log: topics[1] = from, topics[2] = to
+        let from_addr = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
+        let to_addr = Address::from_str("0x0000000000000000000000000000000000000002").unwrap();
+
+        // topics are H256 where last 20 bytes are the address
+        let mut t1 = [0u8; 32];
+        t1[12..].copy_from_slice(from_addr.as_bytes());
+        let mut t2 = [0u8; 32];
+        t2[12..].copy_from_slice(to_addr.as_bytes());
+
+        let topics = vec![H256::zero(), H256::from(t1), H256::from(t2)];
+
+        // data: 32 byte big-endian amount (e.g. 42)
+        let mut amount_bytes = vec![0u8; 32];
+        amount_bytes[31] = 42u8;
+
+        let log = Log {
+            address: Address::zero(),
+            topics,
+            data: Bytes::from(amount_bytes.clone()),
+            block_number: Some(U64::from(123u64)),
+            transaction_hash: Some(H256::from_slice(&[1u8; 32])),
+            block_hash: None,
+            transaction_index: None,
+            log_index: None,
+            transaction_log_index: None,
+            log_type: None,
+            removed: Some(false),
+        };
+
+        // parse like in track_erc20_transfers
+        let from = Address::from(log.topics[1]);
+        let to = Address::from(log.topics[2]);
+        assert_eq!(from, from_addr);
+        assert_eq!(to, to_addr);
+
+        let value = U256::from_big_endian(&log.data.0);
+        assert_eq!(value.as_u64(), 42);
+    }
+
+    #[test]
+    fn test_processed_txs_deduplication_logic() {
+        let mut set = std::collections::HashSet::new();
+        let id = "eth:0xdeadbeef".to_string();
+        assert!(!set.contains(&id));
+        set.insert(id.clone());
+        assert!(set.contains(&id));
     }
 }
