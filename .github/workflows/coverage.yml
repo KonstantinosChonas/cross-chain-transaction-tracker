@@ -137,6 +137,7 @@ jobs:
 
       - name: Create coverage summary
         run: |
+          mkdir -p coverage
           cat > coverage/index.html << 'EOF'
           <!DOCTYPE html>
           <html>
@@ -153,42 +154,33 @@ jobs:
           <body>
               <h1>Cross-Chain Transaction Tracker - Coverage Reports</h1>
               <div class="coverage-section">
-              echo "✗ Timeout waiting for Solana"
-              docker compose -f infra/test-docker-compose.yml logs solana
-              exit 1
-            fi
-          done
+                  <h2>Rust Coverage</h2>
+                  <p><a href="rust/index.html">View Rust Coverage Report</a></p>
+              </div>
+              <div class="coverage-section">
+                  <h2>Go Coverage</h2>
+                  <p><a href="go/go-coverage.html">View Go Coverage Report</a></p>
+              </div>
+          </body>
+          </html>
+          EOF
 
-      - name: Check service health on failure
-        if: failure()
-        run: |
-          echo "=== Docker container status ==="
-          docker compose -f infra/test-docker-compose.yml ps
-          echo "=== Anvil logs ==="
-          docker compose -f infra/test-docker-compose.yml logs anvil
-          echo "=== Solana logs ==="
-          docker compose -f infra/test-docker-compose.yml logs solana
-
-      - name: Run integration tests with coverage
-        working-directory: ./tests/integration
-        run: |
-          pytest --cov=. --cov-report=xml --cov-report=html -v
-
-      - name: Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./tests/integration/coverage.xml
-          flags: integration
-          name: integration-coverage
-          fail_ci_if_error: false
-
-      - name: Upload integration coverage report
+      - name: Upload combined coverage report
         uses: actions/upload-artifact@v4
         with:
-          name: integration-coverage-report
-          path: tests/integration/htmlcov/
-          retention-days: 14
+          name: combined-coverage-report
+          path: coverage/
+          retention-days: 30
 
-      - name: Cleanup
-        if: always()
-        run: docker compose -f infra/test-docker-compose.yml down -v
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `## 📊 Code Coverage Report\n\n- Rust and Go coverage reports have been generated for this PR.\n- Download artifacts from the workflow run to view HTML reports.`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
