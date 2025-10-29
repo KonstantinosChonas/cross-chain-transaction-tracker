@@ -222,8 +222,23 @@ jobs:
 
       - name: Wait for services
         run: |
-          timeout 90 bash -c 'until curl -sf http://localhost:8545 > /dev/null; do sleep 2; done'
-          timeout 90 bash -c 'until curl -sf http://localhost:8899 > /dev/null; do sleep 2; done'
+          echo "Waiting for Ethereum (Anvil) on port 8545..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8545 > /dev/null; do echo -n "."; sleep 2; done'
+          echo -e "\n✓ Ethereum service is ready"
+
+          echo "Waiting for Solana on port 8899..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8899 > /dev/null; do echo -n "."; sleep 2; done'
+          echo -e "\n✓ Solana service is ready"
+
+      - name: Check service health on failure
+        if: failure()
+        run: |
+          echo "=== Docker container status ==="
+          docker compose -f infra/test-docker-compose.yml ps
+          echo "=== Anvil logs ==="
+          docker compose -f infra/test-docker-compose.yml logs anvil
+          echo "=== Solana logs ==="
+          docker compose -f infra/test-docker-compose.yml logs solana
 
       - name: Run integration tests with coverage
         working-directory: ./tests/integration
