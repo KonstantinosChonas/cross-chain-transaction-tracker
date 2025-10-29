@@ -215,6 +215,13 @@ func (s *EventStore) GetByWallet(address string, filter EventFilter) []*Event {
 		if filter.To != "" && event.To != filter.To {
 			continue
 		}
+		if filter.MinValue > 0 {
+			if val, err := strconv.ParseFloat(event.Value, 64); err == nil {
+				if val < filter.MinValue {
+					continue
+				}
+			}
+		}
 		filteredEvents = append(filteredEvents, event)
 	}
 
