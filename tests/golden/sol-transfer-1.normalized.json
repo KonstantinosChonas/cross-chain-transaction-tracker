@@ -1,0 +1,12 @@
+{
+  "chain": "solana",
+  "type": "sol_transfer",
+  "hash": "5MtBvxVxzUqsGmDGh1ijb9yR6hoK7kFGNuFPxGKHqC8LLNZsNwUVbv5QHJbHKBzJhboLLm1QWwXJ6QjhEL5Paqwu",
+  "block_number": 123456789,
+  "timestamp": 1635123456,
+  "from": "9B5XszUGdMaxCZ7uSQhPzdks5ZQSmWxrmzCSvtJ6Ns6g",
+  "to": "2wmVCSfPxGPjrnMMn7rchp4uaeoTqN39mXFC2zhPdri9",
+  "value": "100000000",
+  "decimals": 9,
+  "status": "success"
+}

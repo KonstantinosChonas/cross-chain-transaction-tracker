@@ -1,4 +1,4 @@
-.PHONY: dev rust go clean
+.PHONY: dev rust go clean test test-update-golden
 
 # Run both services for dev. Adjust commands as you implement them.
 dev:
@@ -16,3 +16,13 @@ clean:
 	@echo "Cleaning rust target and go bin"
 	cd rust && cargo clean || true
 	rm -rf go/bin || true
+
+test:
+	@echo "Running tests with existing golden files..."
+	cd go/cmd/api && go test ./...
+	cd rust && cargo test
+
+test-update-golden:
+	@echo "Updating golden test files..."
+	cd go/cmd/api && go test ./... -update
+	cd rust && cargo test -- --update-goldens

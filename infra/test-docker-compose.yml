@@ -17,7 +17,9 @@ services:
 
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
-    command: anvil --host 0.0.0.0
+    command: ["anvil"]
+    environment:
+      - ANVIL_IP_ADDR=0.0.0.0
     ports:
       - "8545:8545"
 

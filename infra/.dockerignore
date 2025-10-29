@@ -1,0 +1,13 @@
+# Exclude Rust build artifacts to reduce build context size
+../rust/target/
+
+# Exclude Go build artifacts
+../go/bin/
+
+# Exclude Python venvs and caches
+../**/.venv/
+../**/__pycache__/
+../**/.pytest_cache/
+
+# Exclude git
+../.git/

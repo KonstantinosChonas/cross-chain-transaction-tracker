@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   api:
     build:
@@ -6,9 +5,32 @@ services:
       dockerfile: infra/go.Dockerfile
     ports:
       - "8080:8080"
+    environment:
+      # Ensure API connects to test redis when running the combined compose
+      - REDIS_URL=redis://redis:6379
+      - TEST_MODE=true
+      # Persist events to Postgres for idempotency across restarts
+      - POSTGRES_DSN=postgres://testuser:testpassword@postgres:5432/testdb?sslmode=disable
+    depends_on:
+      - redis
+      - postgres
   rust:
     build:
       context: ..
       dockerfile: infra/rust.Dockerfile
+    environment:
+      - RUST_LOG=info
+      - ETH_RPC_URL=http://anvil:8545
+      - SOL_RPC_URL=http://solana:8899
+      - REDIS_URL=redis://redis:6379
+      - ETH_NETWORK=anvil
+      - SOL_NETWORK=localnet
+      - POLL_INTERVAL_SECS=2
+      - LOG_LEVEL=info
+      - WATCHED_ADDRESSES_ETH=
+      - WATCHED_ADDRESSES_SOL=
     depends_on:
       - api
+      - redis
+      - anvil
+      - solana

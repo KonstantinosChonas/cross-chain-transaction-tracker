@@ -9,7 +9,7 @@ use tokio::time::{sleep, Duration};
 use tokio_stream::StreamExt;
 
 use ethers::prelude::*;
-use ethers::providers::{Middleware, Provider, Ws};
+use ethers::providers::{Http, Middleware, Provider, Ws};
 use solana_client::{rpc_client::RpcClient, rpc_config::RpcTransactionConfig};
 
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature};
@@ -21,13 +21,45 @@ mod config;
 mod retry;
 mod solana_parser;
 
+// Include the golden test module
+mod tests;
+
 async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> anyhow::Result<()> {
-    let mut con = redis_client.get_multiplexed_async_connection().await?;
+    use retry::retry_with_backoff;
     let payload = serde_json::to_string(event)?;
-    con.publish::<_, _, ()>("cross_chain_events", payload)
-        .await?;
-    info!("Published event to Redis: {}", event.event_id);
-    Ok(())
+    // Retry publish with exponential backoff to survive short redis outages
+    let attempts = 8usize;
+    let base = Duration::from_millis(500);
+    let factor = 2.0;
+    let event_id = event.event_id.clone();
+    let res: anyhow::Result<()> = retry_with_backoff(attempts, base, factor, || {
+        let client = redis_client.clone();
+        let payload = payload.clone();
+        async move {
+            match client.get_multiplexed_async_connection().await {
+                Ok(mut con) => match con.publish::<_, _, ()>("cross_chain_events", payload).await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(anyhow!(e)),
+                },
+                Err(e) => Err(anyhow!(e)),
+            }
+        }
+    })
+    .await;
+
+    match res {
+        Ok(_) => {
+            info!("Published event to Redis: {}", event_id);
+            Ok(())
+        }
+        Err(e) => {
+            error!(
+                "Failed to publish event {} to Redis after retries: {:?}",
+                event_id, e
+            );
+            Err(e)
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -95,45 +127,33 @@ async fn main() -> anyhow::Result<()> {
         let last_eth_block = Arc::clone(&last_eth_block);
         let redis_client = redis_client.clone();
         tokio::spawn(async move {
-            if !cfg.eth_rpc_url.starts_with("ws") {
-                error!("ETH tracking requires a WebSocket RPC URL (e.g. wss://...)");
-                return;
-            }
-            loop {
-                info!("Connecting to ETH provider at {}", cfg.eth_rpc_url);
-                let ws = match Ws::connect(cfg.eth_rpc_url.clone()).await {
-                    Ok(ws) => ws,
-                    Err(e) => {
-                        error!("Failed to connect ETH WebSocket: {:?}. Retrying in 10s.", e);
-                        sleep(Duration::from_secs(10)).await;
-                        continue;
-                    }
-                };
-                let provider = Arc::new(Provider::new(ws));
-                info!("Successfully connected to ETH provider.");
+            // Support both WebSocket (for production) and HTTP (for Anvil testing)
+            let use_websocket = cfg.eth_rpc_url.starts_with("ws");
 
-                let watched_addresses: Vec<Address> = cfg
-                    .watched_addresses_eth
-                    .iter()
-                    .map(|s| s.parse().expect("Invalid ETH address"))
-                    .collect();
+            if use_websocket {
+                loop {
+                    info!(
+                        "Connecting to ETH WebSocket provider at {}",
+                        cfg.eth_rpc_url
+                    );
+                    let ws = match Ws::connect(cfg.eth_rpc_url.clone()).await {
+                        Ok(ws) => ws,
+                        Err(e) => {
+                            error!("Failed to connect ETH WebSocket: {:?}. Retrying in 10s.", e);
+                            sleep(Duration::from_secs(10)).await;
+                            continue;
+                        }
+                    };
+                    let provider = Arc::new(Provider::new(ws));
+                    info!("Successfully connected to ETH WebSocket provider.");
 
-                let native_tracker = track_native_transfers(
-                    Arc::clone(&provider),
-                    watched_addresses.clone(),
-                    cfg.eth_network.clone(),
-                    Arc::clone(&processed_txs),
-                    Arc::clone(&last_eth_block),
-                    redis_client.clone(),
-                );
+                    let watched_addresses: Vec<Address> = cfg
+                        .watched_addresses_eth
+                        .iter()
+                        .map(|s| s.parse().expect("Invalid ETH address"))
+                        .collect();
 
-                if watched_addresses.is_empty() {
-                    warn!("No watched ETH addresses for ERC-20 transfers. Tracking native transfers only.");
-                    if let Err(e) = native_tracker.await {
-                        warn!("Native ETH transfer tracker failed: {}.", e);
-                    }
-                } else {
-                    let erc20_tracker = track_erc20_transfers(
+                    let native_tracker = track_native_transfers(
                         Arc::clone(&provider),
                         watched_addresses.clone(),
                         cfg.eth_network.clone(),
@@ -142,21 +162,49 @@ async fn main() -> anyhow::Result<()> {
                         redis_client.clone(),
                     );
 
-                    tokio::select! {
-                        res = erc20_tracker => {
-                            if let Err(e) = res {
-                                warn!("ERC-20 tracker failed: {}.", e);
-                            }
-                        },
-                        res = native_tracker => {
-                            if let Err(e) = res {
-                                warn!("Native ETH transfer tracker failed: {}.", e);
-                            }
-                        },
+                    if watched_addresses.is_empty() {
+                        warn!("No watched ETH addresses for ERC-20 transfers. Tracking native transfers only.");
+                        if let Err(e) = native_tracker.await {
+                            warn!("Native ETH transfer tracker failed: {}.", e);
+                        }
+                    } else {
+                        let erc20_tracker = track_erc20_transfers(
+                            Arc::clone(&provider),
+                            watched_addresses.clone(),
+                            cfg.eth_network.clone(),
+                            Arc::clone(&processed_txs),
+                            Arc::clone(&last_eth_block),
+                            redis_client.clone(),
+                        );
+
+                        tokio::select! {
+                            res = erc20_tracker => {
+                                if let Err(e) = res {
+                                    warn!("ERC-20 tracker failed: {}.", e);
+                                }
+                            },
+                            res = native_tracker => {
+                                if let Err(e) = res {
+                                    warn!("Native ETH transfer tracker failed: {}.", e);
+                                }
+                            },
+                        }
                     }
+                    warn!("An ETH WebSocket tracker task has finished. Restarting trackers after 5s delay.");
+                    sleep(Duration::from_secs(5)).await;
                 }
-                warn!("An ETH tracker task has finished. Restarting trackers after 5s delay.");
-                sleep(Duration::from_secs(5)).await;
+            } else {
+                // HTTP polling mode for Anvil testing
+                info!("Using HTTP polling mode for ETH at {}", cfg.eth_rpc_url);
+                poll_eth_blocks(
+                    cfg.eth_rpc_url.clone(),
+                    cfg.watched_addresses_eth.clone(),
+                    cfg.eth_network.clone(),
+                    Arc::clone(&processed_txs),
+                    Arc::clone(&last_eth_block),
+                    redis_client.clone(),
+                )
+                .await;
             }
         })
     };
@@ -326,6 +374,195 @@ async fn track_native_transfers(
     Err(anyhow!("Native transfer block stream ended"))
 }
 
+async fn poll_eth_blocks(
+    rpc_url: String,
+    watched_addresses_str: Vec<String>,
+    network: String,
+    processed_txs: Arc<Mutex<HashSet<String>>>,
+    last_block: Arc<Mutex<Option<u64>>>,
+    redis_client: redis::Client,
+) {
+    use ethers::providers::Http;
+
+    info!("Starting ETH HTTP polling mode");
+    let watched_addresses: Vec<Address> = watched_addresses_str
+        .iter()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+
+    let provider = match Provider::<Http>::try_from(rpc_url.clone()) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            error!("Failed to create HTTP provider: {:?}", e);
+            return;
+        }
+    };
+
+    loop {
+        match provider.get_block_number().await {
+            Ok(current_block) => {
+                let current = current_block.as_u64();
+                let start = {
+                    let mut last = last_block.lock().await;
+                    match *last {
+                        Some(prev) => {
+                            if current < prev {
+                                // Chain likely restarted (e.g., Anvil reset). Reset window with a small lookback
+                                // to ensure we pick up immediate post-restart transactions.
+                                let lookback = 10u64;
+                                let new_start = current.saturating_sub(lookback);
+                                *last = Some(new_start);
+                                info!(
+                                    "ETH poller detected block regression (prev={}, current={}); resetting start to {}",
+                                    prev, current, new_start
+                                );
+                                new_start
+                            } else {
+                                // No regression if current == prev; just continue next loop
+                                prev
+                            }
+                        }
+                        None => {
+                            // Initial state: start from block 0 if chain has any blocks
+                            if current > 0 {
+                                0
+                            } else {
+                                current
+                            }
+                        }
+                    }
+                };
+
+                // Process blocks even when current == start (to catch block 1 on fresh chains)
+                if current >= start {
+                    let range_start = if current == start { start } else { start + 1 };
+                    if range_start <= current {
+                        info!("Polling blocks {} to {}", range_start, current);
+                        for block_num in range_start..=current {
+                            if let Err(e) = process_eth_block(
+                                &provider,
+                                block_num,
+                                &watched_addresses,
+                                &network,
+                                &processed_txs,
+                                &redis_client,
+                            )
+                            .await
+                            {
+                                warn!("Error processing block {}: {:?}", block_num, e);
+                            }
+                        }
+                    }
+                    let mut last = last_block.lock().await;
+                    *last = Some(current);
+                }
+            }
+            Err(e) => {
+                error!("Failed to get block number: {:?}", e);
+            }
+        }
+        sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn process_eth_block(
+    provider: &Provider<Http>,
+    block_num: u64,
+    watched_addresses: &[Address],
+    network: &str,
+    processed_txs: &Arc<Mutex<HashSet<String>>>,
+    redis_client: &redis::Client,
+) -> anyhow::Result<()> {
+    use ethers::types::BlockNumber;
+
+    let block = match provider
+        .get_block_with_txs(BlockNumber::Number(block_num.into()))
+        .await?
+    {
+        Some(b) => b,
+        None => return Ok(()),
+    };
+
+    for tx in block.transactions {
+        // Check native transfers
+        // If watched_addresses is empty, track ALL transactions (useful for testing)
+        let track_all = watched_addresses.is_empty();
+        let from_watched = track_all || watched_addresses.contains(&tx.from);
+        let to_watched = track_all
+            || tx
+                .to
+                .map(|to| watched_addresses.contains(&to))
+                .unwrap_or(false);
+
+        if from_watched || to_watched {
+            let event_id = format!("eth:{:?}", tx.hash);
+            if processed_txs.lock().await.insert(event_id.clone()) {
+                let event = Event {
+                    event_id: event_id.clone(),
+                    chain: "ethereum".into(),
+                    network: network.to_string(),
+                    tx_hash: format!("{:?}", tx.hash),
+                    timestamp: block.timestamp.to_string(),
+                    from: format!("{:?}", tx.from),
+                    to: format!("{:?}", tx.to.unwrap_or_default()),
+                    value: tx.value.to_string(),
+                    event_type: "transfer".into(),
+                    slot: None,
+                    token: None,
+                };
+                publish_event_to_redis(redis_client, &event).await?;
+            }
+        }
+
+        // Check for ERC20 Transfer logs in transaction receipt
+        // Always check receipts (either for specific addresses or all if list is empty)
+        if let Ok(Some(receipt)) = provider.get_transaction_receipt(tx.hash).await {
+            for log in receipt.logs {
+                if log.topics.len() == 3
+                    && log.topics[0]
+                        == ethers::core::utils::keccak256("Transfer(address,address,uint256)")
+                            .into()
+                {
+                    let from = Address::from(log.topics[1]);
+                    let to = Address::from(log.topics[2]);
+
+                    // Track all ERC20 transfers if watched_addresses is empty
+                    let track_all = watched_addresses.is_empty();
+                    if track_all
+                        || watched_addresses.contains(&from)
+                        || watched_addresses.contains(&to)
+                    {
+                        let event_id =
+                            format!("eth:{:?}:log{}", tx.hash, log.log_index.unwrap_or_default());
+                        if processed_txs.lock().await.insert(event_id.clone()) {
+                            let event = Event {
+                                event_id: event_id.clone(),
+                                chain: "ethereum".into(),
+                                network: network.to_string(),
+                                tx_hash: format!("{:?}", tx.hash),
+                                timestamp: block.timestamp.to_string(),
+                                from: format!("{:?}", from),
+                                to: format!("{:?}", to),
+                                value: U256::from_big_endian(&log.data.0).to_string(),
+                                event_type: "erc20_transfer".into(),
+                                slot: None,
+                                token: Some(Token {
+                                    address: format!("{:?}", log.address),
+                                    symbol: "".into(),
+                                    decimals: 18,
+                                }),
+                            };
+                            publish_event_to_redis(redis_client, &event).await?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn subscribe_to_solana_transfers(
     ws_url: &str,
     network: &str,
@@ -484,10 +721,26 @@ async fn track_solana_transfers(
         info!("No Solana addresses to watch.");
         return;
     }
-    if !ws_url.starts_with("ws") {
-        error!("SOL tracking requires a WebSocket URL (e.g. wss://...)");
+
+    // Support both WebSocket and HTTP URLs
+    let use_websocket = ws_url.starts_with("ws");
+
+    if !use_websocket {
+        info!("Using HTTP polling mode for Solana at {}", ws_url);
+        // For HTTP mode, convert URL and use polling
+        let rpc_url = ws_url.to_string();
+        poll_solana_transfers(
+            &rpc_url,
+            network,
+            watched_addresses_str,
+            processed_txs,
+            last_slot,
+            redis_client,
+        )
+        .await;
         return;
     }
+
     let watched_addresses: Vec<Pubkey> = watched_addresses_str
         .iter()
         .map(|s| Pubkey::from_str(s).expect("Invalid Solana address"))
@@ -511,78 +764,78 @@ async fn track_solana_transfers(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ethers::types::{Address, Bytes, Log, H256, U256, U64};
-    use std::str::FromStr;
+async fn poll_solana_transfers(
+    rpc_url: &str,
+    network: &str,
+    watched_addresses_str: &[String],
+    processed_txs: Arc<Mutex<HashSet<String>>>,
+    last_slot: Arc<Mutex<Option<u64>>>,
+    redis_client: redis::Client,
+) {
+    info!("Starting Solana HTTP polling mode");
+    let rpc_client = Arc::new(RpcClient::new(rpc_url.to_string()));
+    let watched_addresses: Vec<Pubkey> = watched_addresses_str
+        .iter()
+        .filter_map(|s| Pubkey::from_str(s).ok())
+        .collect();
 
-    #[test]
-    fn test_eth_event_id_generation() {
-        let tx_hash =
-            H256::from_str("0x123456789012345678901234567890123456789012345678901234567890abcd")
-                .unwrap();
-        let expected_id = "eth:0x123456789012345678901234567890123456789012345678901234567890abcd";
-        let event_id = format!("eth:{:?}", tx_hash);
-        assert_eq!(event_id, expected_id);
+    for address in watched_addresses {
+        let pubkey = address;
+        let network = network.to_string();
+        let rpc_client = rpc_client.clone();
+        let processed_txs = Arc::clone(&processed_txs);
+        let last_slot = Arc::clone(&last_slot);
+        let redis_client = redis_client.clone();
+
+        tokio::spawn(async move {
+            info!("Starting poll loop for Solana address {}", pubkey);
+            loop {
+                let signatures_res = tokio::task::spawn_blocking({
+                    let rpc_client = rpc_client.clone();
+                    let pubkey = pubkey;
+                    move || rpc_client.get_signatures_for_address(&pubkey)
+                })
+                .await;
+
+                match signatures_res {
+                    Ok(Ok(signatures)) => {
+                        for sig_info in signatures.iter() {
+                            let signature = sig_info.signature.clone();
+                            if let Err(e) = process_solana_transaction(
+                                &rpc_client,
+                                &network,
+                                signature,
+                                &pubkey,
+                                Arc::clone(&processed_txs),
+                                Arc::clone(&last_slot),
+                                &redis_client,
+                            )
+                            .await
+                            {
+                                warn!(
+                                    "Failed to process solana tx {}: {:?}",
+                                    sig_info.signature, e
+                                );
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Error fetching signatures for {}: {:?}", pubkey, e);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Task panicked while fetching signatures for {}: {:?}",
+                            pubkey, e
+                        );
+                    }
+                }
+                sleep(Duration::from_secs(5)).await;
+            }
+        });
     }
 
-    #[test]
-    fn test_sol_event_id_generation() {
-        let signature = "5wLkiRHwfgxj8PvAkcsHXEbGYAKQWy6Phu6JX49tBwwBKpPVpRHKPUNFqUbvFPmpXSxmRqGNgHErkBDu2XCfBJVb";
-        let expected_id = "sol:5wLkiRHwfgxj8PvAkcsHXEbGYAKQWy6Phu6JX49tBwwBKpPVpRHKPUNFqUbvFPmpXSxmRqGNgHErkBDu2XCfBJVb";
-        let event_id = format!("sol:{}", signature);
-        assert_eq!(event_id, expected_id);
-    }
-
-    #[test]
-    fn test_parse_erc20_log() {
-        // construct a fake ERC-20 Transfer log: topics[1] = from, topics[2] = to
-        let from_addr = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let to_addr = Address::from_str("0x0000000000000000000000000000000000000002").unwrap();
-
-        // topics are H256 where last 20 bytes are the address
-        let mut t1 = [0u8; 32];
-        t1[12..].copy_from_slice(from_addr.as_bytes());
-        let mut t2 = [0u8; 32];
-        t2[12..].copy_from_slice(to_addr.as_bytes());
-
-        let topics = vec![H256::zero(), H256::from(t1), H256::from(t2)];
-
-        // data: 32 byte big-endian amount (e.g. 42)
-        let mut amount_bytes = vec![0u8; 32];
-        amount_bytes[31] = 42u8;
-
-        let log = Log {
-            address: Address::zero(),
-            topics,
-            data: Bytes::from(amount_bytes.clone()),
-            block_number: Some(U64::from(123u64)),
-            transaction_hash: Some(H256::from_slice(&[1u8; 32])),
-            block_hash: None,
-            transaction_index: None,
-            log_index: None,
-            transaction_log_index: None,
-            log_type: None,
-            removed: Some(false),
-        };
-
-        // parse like in track_erc20_transfers
-        let from = Address::from(log.topics[1]);
-        let to = Address::from(log.topics[2]);
-        assert_eq!(from, from_addr);
-        assert_eq!(to, to_addr);
-
-        let value = U256::from_big_endian(&log.data.0);
-        assert_eq!(value.as_u64(), 42);
-    }
-
-    #[test]
-    fn test_processed_txs_deduplication_logic() {
-        let mut set = std::collections::HashSet::new();
-        let id = "eth:0xdeadbeef".to_string();
-        assert!(!set.contains(&id));
-        set.insert(id.clone());
-        assert!(set.contains(&id));
+    // Keep the main task alive
+    loop {
+        sleep(Duration::from_secs(60)).await;
     }
 }

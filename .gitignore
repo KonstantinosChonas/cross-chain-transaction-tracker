@@ -20,3 +20,28 @@ node_modules/
 
 # Local env
 .env
+
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.pyc
+*.pyo
+*.pyd
+
+# Test artifacts
+coverage/
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Rust/Cargo incremental (already covered by target/, but keep build/ too)
+build/
+
+# Virtualenvs inside tests
+tests/**/.venv/
+

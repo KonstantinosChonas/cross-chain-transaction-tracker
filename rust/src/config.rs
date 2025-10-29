@@ -117,6 +117,7 @@ mod tests {
     use super::*;
 
     fn cleanup_env() {
+        // Remove all environment variables that might affect the test
         std::env::remove_var("ETH_RPC_URL");
         std::env::remove_var("SOL_RPC_URL");
         std::env::remove_var("REDIS_URL");
@@ -126,11 +127,17 @@ mod tests {
         std::env::remove_var("SOL_NETWORK");
         std::env::remove_var("POLL_INTERVAL_SECS");
         std::env::remove_var("LOG_LEVEL");
+
+        // Reset dotenv to ensure a clean state
+        dotenvy::dotenv().ok();
     }
 
     #[test]
     fn test_config_from_env_success_and_overrides() {
+        // Ensure we start with a clean environment
         cleanup_env();
+
+        // Set required environment variables
         std::env::set_var("ETH_RPC_URL", "wss://example.eth");
         std::env::set_var("SOL_RPC_URL", "wss://example.sol");
         std::env::set_var("REDIS_URL", "redis://localhost");
@@ -143,13 +150,26 @@ mod tests {
         std::env::set_var("SOL_NETWORK", "mainnet");
         std::env::set_var("POLL_INTERVAL_SECS", "42");
 
+        // Verify that POLL_INTERVAL_SECS is set correctly
+        assert_eq!(
+            std::env::var("POLL_INTERVAL_SECS").unwrap(),
+            "42",
+            "POLL_INTERVAL_SECS not set correctly"
+        );
+
+        // Load config
         let cfg = Config::from_env().expect("config should load");
+
+        // Verify all values
         assert_eq!(cfg.eth_rpc_url, "wss://example.eth");
         assert_eq!(cfg.sol_rpc_url, "wss://example.sol");
         assert_eq!(cfg.redis_url, "redis://localhost");
         assert_eq!(cfg.watched_addresses_eth.len(), 2);
         assert_eq!(cfg.watched_addresses_sol.len(), 2);
         assert_eq!(cfg.poll_interval_secs, 42);
+
+        // Clean up after test
+        cleanup_env();
     }
 
     #[test]

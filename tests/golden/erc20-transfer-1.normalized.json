@@ -1,0 +1,13 @@
+{
+  "chain": "ethereum",
+  "type": "erc20_transfer",
+  "hash": "0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",
+  "block_number": 6139707,
+  "timestamp": null,
+  "token_address": "0x4fabb145d64652a948d72533023f6e7a623c7c53",
+  "from": "0xa7649982c85a389297831b2d26d93489baf0bd06",
+  "to": "0xb5a5f22694352c15b00323844ad545abb2b11028",
+  "value": "90000000000000",
+  "decimals": 18,
+  "status": "success"
+}
