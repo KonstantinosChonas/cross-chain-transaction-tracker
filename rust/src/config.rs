@@ -133,6 +133,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_from_env_success_and_overrides() {
         // Ensure we start with a clean environment
         cleanup_env();
