@@ -174,14 +174,26 @@ mod tests {
     #[test]
     fn test_config_from_env_invalid_poll_interval() {
         cleanup_env();
+
+        // Set all required vars
         std::env::set_var("ETH_RPC_URL", "wss://example.eth");
         std::env::set_var("SOL_RPC_URL", "wss://example.sol");
         std::env::set_var("REDIS_URL", "redis://localhost");
         std::env::set_var("ETH_NETWORK", "mainnet");
         std::env::set_var("SOL_NETWORK", "mainnet");
-        std::env::set_var("POLL_INTERVAL_SECS", "not-a-number");
+
+        // Set invalid poll interval AFTER other vars to ensure it's not overridden
+        std::env::set_var("POLL_INTERVAL_SECS", "invalid-number");
 
         let res = Config::from_env();
-        assert!(res.is_err());
+
+        // Clean up before assertion to avoid polluting other tests
+        cleanup_env();
+
+        assert!(
+            res.is_err(),
+            "Expected error for invalid POLL_INTERVAL_SECS, got: {:?}",
+            res
+        );
     }
 }
