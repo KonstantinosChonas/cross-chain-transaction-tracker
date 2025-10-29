@@ -10,7 +10,7 @@ if [ -z "$E2E" ]; then
   exit 1
 fi
 
-docker-compose -f docker-compose.yml -f test-docker-compose.yml up -d
+docker compose -f docker-compose.yml -f test-docker-compose.yml up -d
 
 # Wait for services to be ready
 echo "Waiting for services to be ready..."
@@ -24,7 +24,7 @@ until curl -s http://127.0.0.1:8080/health > /dev/null 2>&1; do
   attempt=$((attempt + 1))
   if [ $attempt -ge $max_attempts ]; then
     echo "API failed to become healthy after $max_attempts attempts"
-    docker-compose -f docker-compose.yml -f test-docker-compose.yml logs
+    docker compose -f docker-compose.yml -f test-docker-compose.yml logs
     exit 1
   fi
   echo "Waiting for API to be ready... (attempt $attempt/$max_attempts)"
@@ -40,5 +40,5 @@ pytest --maxfail=1 --disable-warnings -v
 
 # Tear down infra with volume cleanup
 cd ../../infra
-docker-compose -f docker-compose.yml -f test-docker-compose.yml down -v
+docker compose -f docker-compose.yml -f test-docker-compose.yml down -v
 

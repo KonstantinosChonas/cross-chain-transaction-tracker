@@ -19,7 +19,8 @@ def repo_root() -> str:
 
 def compose_cmd(*args):
     return [
-        "docker-compose",
+        "docker",
+        "compose",
         "-f",
         os.path.join(repo_root(), "infra", "docker-compose.yml"),
         "-f",
