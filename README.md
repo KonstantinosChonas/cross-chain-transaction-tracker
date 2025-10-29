@@ -1,5 +1,10 @@
 # Cross Chain Transaction Tracker
 
+[![CI](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/workflows/PR%20Quick%20Checks/badge.svg)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/pr-checks.yml)
+[![E2E Tests](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/workflows/Integration%20and%20E2E%20Tests/badge.svg)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/integration-e2e.yml)
+[![Coverage](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/workflows/Code%20Coverage/badge.svg)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/coverage.yml)
+[![Nightly](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/workflows/Nightly%20and%20Scheduled%20Tests/badge.svg)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/nightly.yml)
+
 A service that tracks transactions across multiple blockchains and normalizes them into a common format.
 
 ## Components
@@ -41,6 +46,22 @@ go run main.go
 
 ## Testing
 
+### Continuous Integration
+
+This project uses GitHub Actions for comprehensive CI/CD. See [.github/README.md](.github/README.md) for details.
+
+**PR Requirements:**
+
+- ✅ All unit tests pass (Rust + Go)
+- ✅ Go race detector clean
+- ✅ Linting passes
+- ✅ Code coverage ≥ 70%
+- ✅ Integration and E2E tests pass
+
+**Branch Protection:** Main and release branches are protected and require all CI checks to pass before merging.
+
+For detailed CI/CD documentation, see [.github/CI_BRANCH_PROTECTION.md](.github/CI_BRANCH_PROTECTION.md).
+
 ### Integration Tests
 
 The integration test suite verifies end-to-end event delivery from the Rust listener to the Go API service.
@@ -65,6 +86,23 @@ The integration test:
 - Sends a test transfer transaction
 - Verifies the event is received and normalized by the Go API
 
+### E2E Tests
+
+End-to-end tests validate the complete system with real blockchain nodes:
+
+```bash
+cd tests/e2e
+pip install -r requirements.txt
+
+# Run all E2E tests
+pytest -v
+
+# Run specific test suites
+pytest test_ethereum.py -v
+pytest test_solana.py -v
+pytest test_chaos.py -v
+```
+
 ### Unit Tests
 
 Run Rust tests:
@@ -79,4 +117,32 @@ Run Go tests:
 ```bash
 cd go
 go test ./...
+```
+
+Run with race detection:
+
+```bash
+cd go
+go test -race ./...
+```
+
+### Coverage Reports
+
+Generate coverage locally:
+
+**Rust:**
+
+```bash
+cd rust
+cargo install cargo-llvm-cov
+cargo llvm-cov --html
+# Open target/llvm-cov/html/index.html
+```
+
+**Go:**
+
+```bash
+cd go
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
 ```

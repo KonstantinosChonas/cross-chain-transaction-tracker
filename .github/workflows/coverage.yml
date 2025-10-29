@@ -1,0 +1,250 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage-rust:
+    name: Rust Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Generate Rust coverage
+        working-directory: ./rust
+        run: |
+          cargo llvm-cov --all-features --workspace --lcov --output-path ../rust-coverage.lcov
+
+      - name: Generate Rust coverage report (HTML)
+        working-directory: ./rust
+        run: |
+          cargo llvm-cov --all-features --workspace --html
+          mv target/llvm-cov/html ../rust-coverage-html
+
+      - name: Upload Rust coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./rust-coverage.lcov
+          flags: rust
+          name: rust-coverage
+          fail_ci_if_error: false
+
+      - name: Upload Rust coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage-report
+          path: rust-coverage-html/
+          retention-days: 30
+
+      - name: Check Rust coverage threshold
+        working-directory: ./rust
+        run: |
+          COVERAGE=$(cargo llvm-cov --all-features --workspace --summary-only | grep TOTAL | awk '{print $10}' | sed 's/%//')
+          echo "Rust coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "::warning::Rust coverage is below 70% threshold: $COVERAGE%"
+          fi
+
+  coverage-go:
+    name: Go Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: go/go.sum
+
+      - name: Generate Go coverage
+        working-directory: ./go
+        run: |
+          go test -v -race -covermode=atomic -coverprofile=../go-coverage.out ./...
+
+      - name: Generate Go coverage report (HTML)
+        working-directory: ./go
+        run: |
+          go tool cover -html=../go-coverage.out -o ../go-coverage.html
+
+      - name: Upload Go coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./go-coverage.out
+          flags: go
+          name: go-coverage
+          fail_ci_if_error: false
+
+      - name: Upload Go coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage-report
+          path: |
+            go-coverage.out
+            go-coverage.html
+          retention-days: 30
+
+      - name: Check Go coverage threshold
+        working-directory: ./go
+        run: |
+          COVERAGE=$(go tool cover -func=../go-coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Go coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "::warning::Go coverage is below 70% threshold: $COVERAGE%"
+          fi
+
+  coverage-combined:
+    name: Combined Coverage Report
+    runs-on: ubuntu-latest
+    needs: [coverage-rust, coverage-go]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Rust coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-coverage-report
+          path: ./coverage/rust
+
+      - name: Download Go coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: go-coverage-report
+          path: ./coverage/go
+
+      - name: Create coverage summary
+        run: |
+          cat > coverage/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Cross-Chain Transaction Tracker - Coverage Report</title>
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; }
+                  h1 { color: #333; }
+                  .coverage-section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; }
+                  a { color: #0066cc; text-decoration: none; }
+                  a:hover { text-decoration: underline; }
+              </style>
+          </head>
+          <body>
+              <h1>Cross-Chain Transaction Tracker - Coverage Reports</h1>
+              <div class="coverage-section">
+                  <h2>Rust Coverage</h2>
+                  <p><a href="rust/index.html">View Rust Coverage Report</a></p>
+              </div>
+              <div class="coverage-section">
+                  <h2>Go Coverage</h2>
+                  <p><a href="go/go-coverage.html">View Go Coverage Report</a></p>
+              </div>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload combined coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-coverage-report
+          path: coverage/
+          retention-days: 30
+
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const comment = `## 📊 Code Coverage Report
+
+            Coverage reports have been generated for this PR:
+            - [Rust Coverage Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            - [Go Coverage Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            **Note:** Coverage thresholds are set at 70% for both Rust and Go.
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  coverage-integration:
+    name: Integration Test Coverage
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies with coverage
+        run: |
+          pip install pytest pytest-cov
+
+      - name: Install integration test dependencies
+        working-directory: ./tests/integration
+        run: pip install -r requirements.txt
+
+      - name: Start test infrastructure
+        run: docker-compose -f infra/test-docker-compose.yml up -d
+
+      - name: Wait for services
+        run: |
+          timeout 90 bash -c 'until curl -sf http://localhost:8545 > /dev/null; do sleep 2; done'
+          timeout 90 bash -c 'until curl -sf http://localhost:8899 > /dev/null; do sleep 2; done'
+
+      - name: Run integration tests with coverage
+        working-directory: ./tests/integration
+        run: |
+          pytest --cov=. --cov-report=xml --cov-report=html -v
+
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./tests/integration/coverage.xml
+          flags: integration
+          name: integration-coverage
+          fail_ci_if_error: false
+
+      - name: Upload integration coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage-report
+          path: tests/integration/htmlcov/
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose -f infra/test-docker-compose.yml down -v

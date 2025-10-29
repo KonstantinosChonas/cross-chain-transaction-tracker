@@ -1,0 +1,179 @@
+name: PR Quick Checks
+
+on:
+  pull_request:
+    branches: [main, develop, release/**]
+  push:
+    branches: [main, develop]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test-unit-rust:
+    name: Rust Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Check Rust formatting
+        working-directory: ./rust
+        run: cargo fmt -- --check
+
+      - name: Run Clippy
+        working-directory: ./rust
+        run: cargo clippy -- -D warnings
+
+      - name: Run Rust unit tests
+        working-directory: ./rust
+        run: cargo test --lib --bins
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-logs
+          path: rust/target/debug/deps/*.log
+          retention-days: 7
+
+  test-unit-go:
+    name: Go Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.21", "1.22"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache-dependency-path: go/go.sum
+
+      - name: Verify Go modules
+        working-directory: ./go
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Run Go unit tests
+        working-directory: ./go
+        run: go test -v ./...
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-test-logs-${{ matrix.go-version }}
+          path: go/*.log
+          retention-days: 7
+
+  test-go-race:
+    name: Go Race Detector
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: go/go.sum
+
+      - name: Run tests with race detector
+        working-directory: ./go
+        run: go test -race -v ./...
+
+      - name: Upload race detector logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-race-logs
+          path: go/*.log
+          retention-days: 7
+
+  lint:
+    name: Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: go/go.sum
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          working-directory: go
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Run Rust linting
+        working-directory: ./rust
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  build:
+    name: Build Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build Rust project
+        working-directory: ./rust
+        run: cargo build --release
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: go/go.sum
+
+      - name: Build Go project
+        working-directory: ./go
+        run: go build -v ./...
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            rust/target/release/tracker_rs
+            go/cmd/api/api
+          retention-days: 7

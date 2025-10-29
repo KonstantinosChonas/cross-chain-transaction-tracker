@@ -1,0 +1,41 @@
+# CODEOWNERS - Code Review Assignments
+
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything in the repo
+
+# Uncomment and adjust as needed
+
+# \* @KonstantinosChonas
+
+# GitHub Actions workflows and CI/CD configuration
+
+/.github/ @KonstantinosChonas
+
+# Rust service
+
+/rust/ @KonstantinosChonas
+
+# Go API service
+
+/go/ @KonstantinosChonas
+
+# Infrastructure and Docker
+
+/infra/ @KonstantinosChonas
+
+# Tests
+
+/tests/ @KonstantinosChonas
+
+# Documentation
+
+\*.md @KonstantinosChonas
+/docs/ @KonstantinosChonas
+
+# Dependencies
+
+Cargo.toml @KonstantinosChonas
+Cargo.lock @KonstantinosChonas
+go.mod @KonstantinosChonas
+go.sum @KonstantinosChonas

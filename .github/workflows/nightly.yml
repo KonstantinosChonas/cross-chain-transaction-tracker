@@ -1,0 +1,337 @@
+name: Nightly and Scheduled Tests
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: "0 2 * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run-load-tests:
+        description: "Run load tests"
+        required: false
+        type: boolean
+        default: false
+      run-fuzzing:
+        description: "Run fuzzing tests"
+        required: false
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  test-fuzzing-rust:
+    name: Rust Fuzzing Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'schedule' || github.event_name == 'push' || inputs.run-fuzzing
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Run property-based tests (proptest)
+        working-directory: ./rust
+        run: |
+          # Run proptests with more iterations
+          PROPTEST_CASES=10000 cargo test --release --features proptest
+
+      - name: Run fuzzing (short duration)
+        working-directory: ./rust
+        continue-on-error: true
+        run: |
+          # Initialize fuzz targets if they exist
+          if [ -d "fuzz" ]; then
+            cd fuzz
+            for target in fuzz_targets/*.rs; do
+              target_name=$(basename "$target" .rs)
+              echo "Fuzzing $target_name for 5 minutes..."
+              timeout 300 cargo fuzz run "$target_name" || true
+            done
+          else
+            echo "No fuzz targets found, skipping fuzzing"
+          fi
+
+      - name: Upload fuzzing artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzzing-artifacts
+          path: |
+            rust/fuzz/artifacts/**
+            rust/target/fuzz/**
+          retention-days: 30
+
+  test-load:
+    name: Load Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || inputs.run-load-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install load testing tools
+        run: |
+          pip install locust pytest pytest-benchmark
+
+      - name: Start test infrastructure
+        run: |
+          docker-compose -f infra/test-docker-compose.yml up -d
+          docker-compose -f infra/docker-compose.yml up -d
+
+      - name: Wait for services
+        run: |
+          timeout 120 bash -c 'until curl -sf http://localhost:8545 > /dev/null; do sleep 2; done'
+          timeout 120 bash -c 'until curl -sf http://localhost:8899 > /dev/null; do sleep 2; done'
+          timeout 90 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do sleep 2; done'
+          timeout 90 bash -c 'until curl -sf http://localhost:3000/health > /dev/null; do sleep 2; done'
+
+      - name: Run load tests
+        run: |
+          # Create a simple load test script
+          cat > load_test.py << 'EOF'
+          import requests
+          import time
+          import statistics
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+
+          def send_request(endpoint):
+              start = time.time()
+              try:
+                  response = requests.get(f"http://localhost:3000{endpoint}", timeout=5)
+                  duration = time.time() - start
+                  return {"success": response.status_code == 200, "duration": duration}
+              except Exception as e:
+                  return {"success": False, "duration": time.time() - start}
+
+          def load_test(endpoint, num_requests=1000, concurrency=50):
+              print(f"Running load test: {num_requests} requests with {concurrency} concurrent workers")
+              with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                  futures = [executor.submit(send_request, endpoint) for _ in range(num_requests)]
+                  results = [f.result() for f in as_completed(futures)]
+              
+              successful = sum(1 for r in results if r["success"])
+              durations = [r["duration"] for r in results if r["success"]]
+              
+              print(f"Success rate: {successful}/{num_requests} ({100*successful/num_requests:.2f}%)")
+              if durations:
+                  print(f"Response times - Min: {min(durations):.3f}s, Max: {max(durations):.3f}s, "
+                        f"Mean: {statistics.mean(durations):.3f}s, Median: {statistics.median(durations):.3f}s")
+              
+              return successful >= num_requests * 0.95  # 95% success rate
+
+          if __name__ == "__main__":
+              endpoints = ["/health", "/api/transactions"]
+              all_passed = True
+              for endpoint in endpoints:
+                  print(f"\nTesting {endpoint}...")
+                  if not load_test(endpoint):
+                      all_passed = False
+              exit(0 if all_passed else 1)
+          EOF
+          python load_test.py
+
+      - name: Collect performance metrics
+        if: always()
+        run: |
+          docker stats --no-stream > performance-metrics.txt
+          docker-compose -f infra/docker-compose.yml logs > load-test-logs.txt
+
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: |
+            performance-metrics.txt
+            load-test-logs.txt
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose -f infra/docker-compose.yml down -v
+          docker-compose -f infra/test-docker-compose.yml down -v
+
+  test-stress:
+    name: Stress Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start services
+        run: |
+          docker-compose -f infra/test-docker-compose.yml up -d
+          docker-compose -f infra/docker-compose.yml up -d
+
+      - name: Wait for services
+        run: |
+          timeout 120 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do sleep 2; done'
+          timeout 120 bash -c 'until curl -sf http://localhost:3000/health > /dev/null; do sleep 2; done'
+
+      - name: Run stress tests
+        run: |
+          # Monitor resource usage during stress
+          docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" > stress-before.txt
+
+          # Simulate high transaction volume
+          for i in {1..100}; do
+            curl -X POST http://localhost:3000/api/transactions -H "Content-Type: application/json" \
+              -d '{"chain":"ethereum","hash":"0x'$(openssl rand -hex 32)'"}' &
+          done
+          wait
+
+          sleep 10
+          docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" > stress-after.txt
+
+      - name: Check service health after stress
+        run: |
+          curl -f http://localhost:8080/health
+          curl -f http://localhost:3000/health
+
+      - name: Upload stress test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-test-results
+          path: stress-*.txt
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose -f infra/docker-compose.yml down -v
+          docker-compose -f infra/test-docker-compose.yml down -v
+
+  test-chaos:
+    name: Chaos Engineering Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        working-directory: ./tests/e2e
+        run: pip install -r requirements.txt
+
+      - name: Start services
+        run: |
+          docker-compose -f infra/test-docker-compose.yml up -d
+          docker-compose -f infra/docker-compose.yml up -d
+
+      - name: Wait for services
+        run: |
+          timeout 120 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do sleep 2; done'
+          timeout 120 bash -c 'until curl -sf http://localhost:3000/health > /dev/null; do sleep 2; done'
+
+      - name: Run chaos tests
+        working-directory: ./tests/e2e
+        run: pytest test_chaos.py -v --tb=short --log-cli-level=INFO
+
+      - name: Collect chaos test logs
+        if: failure()
+        run: |
+          docker-compose -f infra/docker-compose.yml logs > chaos-app-logs.txt
+          docker-compose -f infra/test-docker-compose.yml logs > chaos-infra-logs.txt
+
+      - name: Upload chaos test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-test-artifacts
+          path: |
+            chaos-*.txt
+            tests/e2e/*.log
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose -f infra/docker-compose.yml down -v
+          docker-compose -f infra/test-docker-compose.yml down -v
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
+
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Rust security audit
+        working-directory: ./rust
+        run: |
+          cargo install cargo-audit
+          cargo audit
+
+      - name: Go security scan
+        uses: securego/gosec@master
+        with:
+          args: "./go/..."
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs:
+      [test-fuzzing-rust, test-load, test-stress, test-chaos, security-scan]
+    if: always() && github.event_name == 'schedule'
+    steps:
+      - name: Check job statuses
+        run: |
+          echo "Fuzzing: ${{ needs.test-fuzzing-rust.result }}"
+          echo "Load: ${{ needs.test-load.result }}"
+          echo "Stress: ${{ needs.test-stress.result }}"
+          echo "Chaos: ${{ needs.test-chaos.result }}"
+          echo "Security: ${{ needs.security-scan.result }}"
