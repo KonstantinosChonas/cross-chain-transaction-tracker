@@ -19,3 +19,6 @@ solana-sdk = "1.18.1"
 spl-token = "4.0.0"
 solana-transaction-status = "1.18.1"
 redis = { version = "0.25.4", features = ["tokio-comp"] }
+
+[dev-dependencies]
+serial_test = "2.0"

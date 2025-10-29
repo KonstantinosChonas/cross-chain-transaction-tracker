@@ -117,6 +117,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn cleanup_env() {
         // Remove all environment variables that might affect the test
@@ -172,6 +173,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_from_env_invalid_poll_interval() {
         cleanup_env();
 
