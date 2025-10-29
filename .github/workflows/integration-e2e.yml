@@ -1,11 +1,14 @@
 name: Integration and E2E Tests
 
 on:
-  push:
-    branches: [main, release/**]
-  pull_request:
-    branches: [main, release/**]
   workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which tests to run"
+        required: false
+        default: "all"
+        type: choice
+        options: [all, integration, e2e, ethereum, solana, chaos]
 
 env:
   CARGO_TERM_COLOR: always

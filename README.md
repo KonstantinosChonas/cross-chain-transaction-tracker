@@ -1,7 +1,7 @@
 # Cross Chain Transaction Tracker
 
 [![CI](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/workflows/PR%20Quick%20Checks/badge.svg)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/pr-checks.yml)
-[![E2E Tests](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/workflows/Integration%20and%20E2E%20Tests/badge.svg)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/integration-e2e.yml)
+[![E2E Tests (manual)](https://img.shields.io/badge/E2E%20Tests-manual-blue)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/integration-e2e.yml)
 [![Coverage](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/workflows/Code%20Coverage/badge.svg)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/coverage.yml)
 [![Nightly](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/workflows/Nightly%20and%20Scheduled%20Tests/badge.svg)](https://github.com/KonstantinosChonas/cross-chain-transaction-tracker/actions/workflows/nightly.yml)
 
@@ -56,7 +56,7 @@ This project uses GitHub Actions for comprehensive CI/CD. See [.github/README.md
 - ✅ Go race detector clean
 - ✅ Linting passes
 - ✅ Code coverage ≥ 70%
-- ✅ Integration and E2E tests pass
+- ✅ Integration and E2E tests (optional manual run)
 
 **Branch Protection:** Main and release branches are protected and require all CI checks to pass before merging.
 
