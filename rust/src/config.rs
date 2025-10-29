@@ -10,7 +10,9 @@ pub struct Config {
     pub watched_addresses_sol: Vec<String>,
     pub eth_network: String,
     pub sol_network: String,
+    #[allow(dead_code)]
     pub poll_interval_secs: u64,
+    #[allow(dead_code)]
     pub log_level: Option<String>,
 }
 
@@ -96,7 +98,7 @@ impl Config {
             }
         };
 
-        let log_level = std::env::var("LOG_LEVEL").ok();
+        let _log_level = std::env::var("LOG_LEVEL").ok();
 
         Ok(Config {
             eth_rpc_url,
@@ -107,7 +109,7 @@ impl Config {
             eth_network,
             sol_network,
             poll_interval_secs,
-            log_level,
+            _log_level,
         })
     }
 }
@@ -127,9 +129,6 @@ mod tests {
         std::env::remove_var("SOL_NETWORK");
         std::env::remove_var("POLL_INTERVAL_SECS");
         std::env::remove_var("LOG_LEVEL");
-
-        // Reset dotenv to ensure a clean state
-        dotenvy::dotenv().ok();
     }
 
     #[test]

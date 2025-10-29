@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -57,7 +57,7 @@ func TestTransactionParsing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Read fixture
 			fixturePath := filepath.Join("..", "..", "..", "tests", "fixtures", tc.chain, tc.fixture)
-			fixtureData, err := ioutil.ReadFile(fixturePath)
+			fixtureData, err := os.ReadFile(fixturePath)
 			if err != nil {
 				t.Fatalf("Failed to read fixture file: %v", err)
 			}
@@ -82,7 +82,7 @@ func TestTransactionParsing(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to marshal normalized data: %v", err)
 				}
-				err = ioutil.WriteFile(goldenPath, goldenData, 0644)
+				err = os.WriteFile(goldenPath, goldenData, 0644)
 				if err != nil {
 					t.Fatalf("Failed to write golden file: %v", err)
 				}
@@ -90,7 +90,7 @@ func TestTransactionParsing(t *testing.T) {
 			}
 
 			// Read golden file
-			goldenData, err := ioutil.ReadFile(goldenPath)
+			goldenData, err := os.ReadFile(goldenPath)
 			if err != nil {
 				t.Fatalf("Failed to read golden file: %v", err)
 			}

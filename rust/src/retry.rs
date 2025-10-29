@@ -34,7 +34,7 @@ where
 
     // First attempt (no delay)
     match operation().await {
-        Ok(v) => return Ok(v),
+        Ok(v) => Ok(v),
         Err(e) => {
             // Fall through to retries
             let mut last_err = e;

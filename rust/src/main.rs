@@ -57,11 +57,12 @@ async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> 
                 "Failed to publish event {} to Redis after retries: {:?}",
                 event_id, e
             );
-            Err(e)
+            Err(anyhow!(e))
         }
     }
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct SystemTransfer {
     source: String,
@@ -69,6 +70,7 @@ struct SystemTransfer {
     lamports: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct TokenTransfer {
     source: String,
@@ -595,7 +597,7 @@ async fn subscribe_to_solana_transfers(
                 // so we don't block the async runtime's reactor.
                 let signatures_res = tokio::task::spawn_blocking({
                     let rpc_client = rpc_client.clone();
-                    let pubkey = pubkey.clone();
+                    let pubkey = pubkey;
                     move || rpc_client.get_signatures_for_address(&pubkey)
                 })
                 .await;

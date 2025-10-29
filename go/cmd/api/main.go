@@ -363,7 +363,7 @@ func (h *Hub) Run() {
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(Health{Status: "OK"})
+	_ = json.NewEncoder(w).Encode(Health{Status: "OK"})
 }
 
 func subscribeToEvents(ctx context.Context, redisURL string, store *EventStore, hub *Hub) {
@@ -482,7 +482,7 @@ func getWalletTransactions(store *EventStore, w http.ResponseWriter, r *http.Req
 
 	events := store.GetByWallet(address, filter)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(events)
+	_ = json.NewEncoder(w).Encode(events)
 }
 
 func getTransactions(store *EventStore, w http.ResponseWriter, r *http.Request) {
@@ -530,7 +530,7 @@ func getTransactions(store *EventStore, w http.ResponseWriter, r *http.Request) 
 
 	events := store.GetRecent(filter)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(events)
+	_ = json.NewEncoder(w).Encode(events)
 }
 
 func main() {
@@ -590,7 +590,7 @@ func main() {
 			}
 			events := store.GetRecent(filter)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(events)
+			_ = json.NewEncoder(w).Encode(events)
 		})
 	}
 

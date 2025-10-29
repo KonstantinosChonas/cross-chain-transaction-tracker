@@ -4,6 +4,7 @@ use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
 
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 pub struct ParsedTransfer {
     pub from: Pubkey,
     pub to: Pubkey,
@@ -12,6 +13,7 @@ pub struct ParsedTransfer {
 
 /// Extract an SPL token transfer from parsed transaction JSON.
 /// Returns None if this is not a token transfer or is malformed.
+#[allow(dead_code)]
 pub fn parse_spl_transfer(tx: &Value) -> Option<ParsedTransfer> {
     // Token transfers have instruction data in message.instructions
     let instructions = tx.get("message")?.get("instructions")?.as_array()?;
@@ -51,16 +53,17 @@ pub fn parse_spl_transfer(tx: &Value) -> Option<ParsedTransfer> {
 }
 
 /// Validate a transaction has all required fields and decode it
+#[allow(dead_code)]
 pub fn validate_and_decode_tx(tx: &Value) -> Result<Value> {
     // Required top-level fields
-    if !tx.get("message").is_some() {
+    if tx.get("message").is_none() {
         return Err(anyhow!("Missing message field"));
     }
 
     let msg = tx.get("message").unwrap();
 
     // Required message fields
-    if !msg.get("accountKeys").is_some() {
+    if msg.get("accountKeys").is_none() {
         return Err(anyhow!("Missing accountKeys field"));
     }
 
@@ -72,6 +75,7 @@ pub fn validate_and_decode_tx(tx: &Value) -> Result<Value> {
 ///
 /// This is intentionally tolerant: it looks for `message.accountKeys` if present
 /// and compares the strings; otherwise returns false.
+#[allow(dead_code)]
 pub fn parsed_tx_touches_watched(parsed: &Value, watched: &Pubkey) -> bool {
     if let Some(message) = parsed.get("message") {
         if let Some(account_keys) = message.get("accountKeys") {

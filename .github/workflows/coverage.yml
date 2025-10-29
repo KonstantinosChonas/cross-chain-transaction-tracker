@@ -218,7 +218,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Start test infrastructure
-        run: docker-compose -f infra/test-docker-compose.yml up -d
+        run: docker compose -f infra/test-docker-compose.yml up -d
 
       - name: Wait for services
         run: |
@@ -247,4 +247,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: docker-compose -f infra/test-docker-compose.yml down -v
+        run: docker compose -f infra/test-docker-compose.yml down -v

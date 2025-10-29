@@ -22,7 +22,7 @@ jobs:
       - name: Install Docker Compose
         run: |
           sudo apt-get update
-          sudo apt-get install -y docker-compose
+          sudo apt-get install -y docker compose
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -37,7 +37,7 @@ jobs:
 
       - name: Build Docker images
         run: |
-          docker-compose -f infra/docker-compose.yml \
+          docker compose -f infra/docker-compose.yml \
                          -f infra/test-docker-compose.yml build
 
       - name: Run E2E tests
@@ -66,5 +66,5 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker-compose -f infra/docker-compose.yml \
+          docker compose -f infra/docker-compose.yml \
                          -f infra/test-docker-compose.yml down -v || true

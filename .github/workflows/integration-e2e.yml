@@ -49,7 +49,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Start test infrastructure
-        run: docker-compose -f infra/test-docker-compose.yml up -d
+        run: docker compose -f infra/test-docker-compose.yml up -d
 
       - name: Wait for services to be ready
         run: |
@@ -73,7 +73,7 @@ jobs:
       - name: Collect container logs
         if: failure()
         run: |
-          docker-compose -f infra/test-docker-compose.yml logs > container-logs.txt
+          docker compose -f infra/test-docker-compose.yml logs > container-logs.txt
 
       - name: Upload test artifacts
         if: failure()
@@ -87,7 +87,7 @@ jobs:
 
       - name: Stop test infrastructure
         if: always()
-        run: docker-compose -f infra/test-docker-compose.yml down -v
+        run: docker compose -f infra/test-docker-compose.yml down -v
 
   test-e2e:
     name: E2E Tests
@@ -133,7 +133,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Start test infrastructure
-        run: docker-compose -f infra/test-docker-compose.yml up -d
+        run: docker compose -f infra/test-docker-compose.yml up -d
 
       - name: Wait for services to be ready
         run: |
@@ -144,8 +144,8 @@ jobs:
 
       - name: Build and start services
         run: |
-          docker-compose -f infra/docker-compose.yml build
-          docker-compose -f infra/docker-compose.yml up -d
+          docker compose -f infra/docker-compose.yml build
+          docker compose -f infra/docker-compose.yml up -d
 
       - name: Wait for application services
         run: |
@@ -173,8 +173,8 @@ jobs:
       - name: Collect application logs
         if: failure()
         run: |
-          docker-compose -f infra/docker-compose.yml logs > app-logs.txt
-          docker-compose -f infra/test-docker-compose.yml logs > infra-logs.txt
+          docker compose -f infra/docker-compose.yml logs > app-logs.txt
+          docker compose -f infra/test-docker-compose.yml logs > infra-logs.txt
 
       - name: Upload test artifacts
         if: failure()
@@ -191,8 +191,8 @@ jobs:
       - name: Stop all services
         if: always()
         run: |
-          docker-compose -f infra/docker-compose.yml down -v
-          docker-compose -f infra/test-docker-compose.yml down -v
+          docker compose -f infra/docker-compose.yml down -v
+          docker compose -f infra/test-docker-compose.yml down -v
 
   test-e2e-full:
     name: Full E2E Test Suite
@@ -219,8 +219,8 @@ jobs:
 
       - name: Start full test environment
         run: |
-          docker-compose -f infra/test-docker-compose.yml up -d
-          docker-compose -f infra/docker-compose.yml up -d
+          docker compose -f infra/test-docker-compose.yml up -d
+          docker compose -f infra/docker-compose.yml up -d
 
       - name: Wait for all services
         run: |
@@ -236,8 +236,8 @@ jobs:
       - name: Collect all logs
         if: failure()
         run: |
-          docker-compose -f infra/docker-compose.yml logs > full-app-logs.txt
-          docker-compose -f infra/test-docker-compose.yml logs > full-infra-logs.txt
+          docker compose -f infra/docker-compose.yml logs > full-app-logs.txt
+          docker compose -f infra/test-docker-compose.yml logs > full-infra-logs.txt
 
       - name: Upload comprehensive artifacts
         if: failure()
@@ -253,5 +253,5 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker-compose -f infra/docker-compose.yml down -v
-          docker-compose -f infra/test-docker-compose.yml down -v
+          docker compose -f infra/docker-compose.yml down -v
+          docker compose -f infra/test-docker-compose.yml down -v
