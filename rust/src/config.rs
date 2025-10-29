@@ -98,7 +98,7 @@ impl Config {
             }
         };
 
-        let _log_level = std::env::var("LOG_LEVEL").ok();
+        let log_level = std::env::var("LOG_LEVEL").ok();
 
         Ok(Config {
             eth_rpc_url,
@@ -109,7 +109,7 @@ impl Config {
             eth_network,
             sol_network,
             poll_interval_secs,
-            _log_level,
+            log_level,
         })
     }
 }
