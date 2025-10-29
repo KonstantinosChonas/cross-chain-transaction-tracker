@@ -8,7 +8,7 @@ ITERATIONS=${1:-5}
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 compose() {
-  docker-compose -f "$REPO_ROOT/infra/docker-compose.yml" -f "$REPO_ROOT/infra/test-docker-compose.yml" "$@"
+  docker compose -f "$REPO_ROOT/infra/docker-compose.yml" -f "$REPO_ROOT/infra/test-docker-compose.yml" "$@"
 }
 
 api_health() {

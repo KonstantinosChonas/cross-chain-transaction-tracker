@@ -30,7 +30,7 @@ until curl -s http://127.0.0.1:8080/health > /dev/null 2>&1; do
   attempt=$((attempt + 1))
   if [ $attempt -ge $max_attempts ]; then
     echo "API failed to become healthy after $max_attempts attempts"
-    docker-compose -f infra/docker-compose.yml -f infra/test-docker-compose.yml logs
+    docker compose -f infra/docker-compose.yml -f infra/test-docker-compose.yml logs
     exit 1
   fi
   echo "Waiting for API to be ready... (attempt $attempt/$max_attempts)"
