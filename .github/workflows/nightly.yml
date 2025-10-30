@@ -351,7 +351,7 @@ jobs:
           go mod verify
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.21.4
 
       - name: Go security scan
         working-directory: ./go

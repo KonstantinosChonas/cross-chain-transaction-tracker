@@ -200,16 +200,21 @@ def test_rpc_disconnects_eth_resume_no_duplicates():
 
 @pytest.mark.timeout(300)
 def test_message_bus_downtime_redis_retry_and_delivery():
-    # Stop Redis just before publishing, then start it back and expect delivery via Rust retry
-    stop_service("redis")
-    time.sleep(2)
+    # Test that Rust's retry mechanism successfully delivers events when Redis recovers.
+    # Strategy: Stop Redis briefly, send a transaction, then restart Redis before
+    # Rust exhausts its 8 retry attempts (total ~127s of backoff).
 
-    # send 1 tx while Redis is down
+    stop_service("redis")
+    time.sleep(1)
+
+    # Send 1 tx while Redis is down. Rust will detect it within ~2s (poll interval)
+    # and begin retry attempts: 500ms, 1s, 2s, 4s, 8s, 16s, 32s, 64s
     sender, recipients, txs = eth_send_native_transfers(n=1)
     target = recipients[0]
 
-    # keep Redis down briefly, then start
-    time.sleep(5)
+    # Wait only 2 seconds (enough for Rust to detect the tx and start retrying,
+    # but not long enough to exhaust retries), then bring Redis back
+    time.sleep(2)
     start_service("redis")
 
     # Restart API to ensure clean Redis reconnection. Redis Pub/Sub is lossy - if the API
@@ -219,7 +224,8 @@ def test_message_bus_downtime_redis_retry_and_delivery():
     restart_service("api")
     time.sleep(5)  # Give API time to start and subscribe
 
-    # Poll API; Rust publish has exponential backoff up to ~60s, so allow up to 120s
+    # Rust should succeed in one of its retry attempts (2s, 4s, 8s, etc.) now that Redis is back.
+    # Allow up to 120s for the event to appear via retries.
     events = poll_api_for_wallet(target, max_wait=120)
     found = False
     target_tx = txs[0].lower().replace("0x", "")
