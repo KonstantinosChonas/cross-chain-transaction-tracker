@@ -201,8 +201,8 @@ def test_rpc_disconnects_eth_resume_no_duplicates():
 @pytest.mark.timeout(300)
 def test_message_bus_downtime_redis_retry_and_delivery():
     # Test that Rust's retry mechanism successfully delivers events when Redis recovers.
-    # Strategy: Stop Redis briefly, send a transaction, then restart Redis before
-    # Rust exhausts its 8 retry attempts (total ~127s of backoff).
+    # Strategy: Stop Redis, send a transaction, restart API+Redis together to ensure
+    # API is subscribed before Rust's retry succeeds.
 
     stop_service("redis")
     time.sleep(1)
@@ -212,20 +212,22 @@ def test_message_bus_downtime_redis_retry_and_delivery():
     sender, recipients, txs = eth_send_native_transfers(n=1)
     target = recipients[0]
 
-    # Wait only 2 seconds (enough for Rust to detect the tx and start retrying,
-    # but not long enough to exhaust retries), then bring Redis back
-    time.sleep(2)
-    start_service("redis")
-
-    # Restart API to ensure clean Redis reconnection. Redis Pub/Sub is lossy - if the API
-    # hasn't reconnected when Rust publishes, the message is dropped. Restarting API
-    # guarantees it will subscribe before Rust's publish retry succeeds.
-    logger.info("Restarting API to ensure clean Redis reconnection...")
+    # Wait 3 seconds to let Rust detect the tx and exhaust early retry attempts.
+    # This ensures Rust is in the later retry stages (4s, 8s, 16s...) when we bring services back.
+    time.sleep(3)
+    
+    # Restart API first to give it time to initialize before Redis comes back.
+    # This way, when Redis starts and Rust's next retry succeeds, API is already subscribed.
+    logger.info("Restarting API before Redis to ensure it's ready to subscribe...")
     restart_service("api")
-    time.sleep(5)  # Give API time to start and subscribe
+    time.sleep(3)  # Give API time to initialize (but Redis still down, so no messages yet)
+    
+    # Now start Redis. API is already running and will subscribe immediately.
+    start_service("redis")
+    time.sleep(3)  # Give API time to establish Redis subscription
 
-    # Rust should succeed in one of its retry attempts (2s, 4s, 8s, etc.) now that Redis is back.
-    # Allow up to 120s for the event to appear via retries.
+    # Rust should succeed in one of its retry attempts (4s, 8s, 16s, etc.) now that Redis is back
+    # and API is subscribed. Allow up to 120s for the event to appear via retries.
     events = poll_api_for_wallet(target, max_wait=120)
     found = False
     target_tx = txs[0].lower().replace("0x", "")

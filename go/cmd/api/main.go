@@ -182,13 +182,23 @@ func (s *EventStore) GetByWallet(address string, filter EventFilter) []*Event {
 					continue
 				}
 				if slot != nil {
+					// G115: Safe conversion - values from DB are already validated
+					if *slot < 0 {
+						log.Warnf("negative slot value in DB: %d", *slot)
+						continue
+					}
 					s := uint64(*slot)
 					ev.Slot = &s
 				}
 				if tokAddr != nil || tokSym != nil || tokDec != nil {
 					ev.Token = &Token{Address: getOrEmpty(tokAddr), Symbol: getOrEmpty(tokSym)}
 					if tokDec != nil {
-						ev.Token.Decimals = uint8(*tokDec)
+						// G115: Safe conversion - decimals validated at persistence
+						if *tokDec < 0 || *tokDec > 255 {
+							log.Warnf("invalid token decimals in DB: %d", *tokDec)
+						} else {
+							ev.Token.Decimals = uint8(*tokDec)
+						}
 					}
 				}
 				out = append(out, &ev)
@@ -290,13 +300,23 @@ func (s *EventStore) GetRecent(filter EventFilter) []*Event {
 					continue
 				}
 				if slot != nil {
+					// G115: Safe conversion - values from DB are already validated
+					if *slot < 0 {
+						log.Warnf("negative slot value in DB: %d", *slot)
+						continue
+					}
 					s := uint64(*slot)
 					ev.Slot = &s
 				}
 				if tokAddr != nil || tokSym != nil || tokDec != nil {
 					ev.Token = &Token{Address: getOrEmpty(tokAddr), Symbol: getOrEmpty(tokSym)}
 					if tokDec != nil {
-						ev.Token.Decimals = uint8(*tokDec)
+						// G115: Safe conversion - decimals validated at persistence
+						if *tokDec < 0 || *tokDec > 255 {
+							log.Warnf("invalid token decimals in DB: %d", *tokDec)
+						} else {
+							ev.Token.Decimals = uint8(*tokDec)
+						}
 					}
 				}
 				out = append(out, &ev)
@@ -644,6 +664,10 @@ func initDB(ctx context.Context, db *pgxpool.Pool) error {
 func persistEvent(ctx context.Context, db *pgxpool.Pool, ev *Event) error {
 	var slot *int64
 	if ev.Slot != nil {
+		// G115: Safe conversion - Solana slots fit in int64 range
+		if *ev.Slot > uint64(^uint64(0)>>1) {
+			return fmt.Errorf("slot value too large: %d", *ev.Slot)
+		}
 		tmp := int64(*ev.Slot)
 		slot = &tmp
 	}
@@ -652,6 +676,7 @@ func persistEvent(ctx context.Context, db *pgxpool.Pool, ev *Event) error {
 	if ev.Token != nil {
 		ta := ev.Token.Address
 		ts := ev.Token.Symbol
+		// G115: Safe conversion - decimals are bounded by ERC20/SPL token standards (max 255)
 		td := int32(ev.Token.Decimals)
 		tokAddr = &ta
 		tokSym = &ts

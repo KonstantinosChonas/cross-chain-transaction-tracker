@@ -2,7 +2,7 @@
 
 ## Summary
 
-Fixed critical security vulnerabilities in Rust dependencies, Go HTTP server security issue, and corrected GitHub Actions workflow configuration for nightly/scheduled tests.
+Fixed critical security vulnerabilities in Rust dependencies, 6 Go security issues (HTTP timeouts + integer overflows), and corrected GitHub Actions workflow configuration for nightly/scheduled tests.
 
 ## Changes Made
 
@@ -112,7 +112,7 @@ This ensures:
 - ✅ Manual workflow_dispatch also runs all tests
 - ✅ No more unexplained skipped jobs
 
-### 4. Go Security Fix (`go/cmd/api/main.go`)
+### 4. Go Security Fixes (`go/cmd/api/main.go`)
 
 #### Fixed G114: HTTP Server Without Timeouts
 
@@ -133,6 +133,25 @@ server := &http.Server{
 **Fixes:**
 
 - ✅ G114 (CWE-676): Prevents potential DoS attacks from slow clients
+- ✅ Adds protection against Slowloris attacks
+- ✅ Prevents resource exhaustion from hanging connections
+
+#### Fixed G115: Integer Overflow Conversions
+
+Added bounds checking for integer type conversions:
+
+1. **Slot conversions (uint64 → int64)**:
+   - Added overflow check before converting to database type
+   - Added negative value check when reading from database
+2. **Token decimals conversions (uint8 ↔ int32)**:
+   - Added range validation (0-255) when reading from database
+   - Safe conversion when persisting (uint8 fits in int32)
+
+**Fixes:**
+
+- ✅ G115 (CWE-190): 5 integer overflow conversion issues
+- ✅ Prevents data corruption from invalid conversions
+- ✅ Adds defensive validation for database values
 - ✅ Adds protection against Slowloris attacks
 - ✅ Prevents resource exhaustion from hanging connections
 
