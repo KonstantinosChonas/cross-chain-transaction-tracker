@@ -38,7 +38,7 @@ jobs:
 
       - name: Run Rust unit tests
         working-directory: ./rust
-        run: cargo test --lib --bins
+        run: cargo test --bins
 
       - name: Upload test results
         if: failure()

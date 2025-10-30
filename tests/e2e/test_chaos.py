@@ -84,8 +84,10 @@ def poll_api_for_wallet(addr: str, max_wait=60):
         try:
             resp = requests.get(url, timeout=3)
             if resp.status_code == 200:
-                last = resp.json()
-                return last
+                data = resp.json()
+                if data:  # Only return if we have actual events
+                    return data
+                last = data  # Keep empty result in case we timeout
         except Exception as e:
             logger.warning(f"API poll failed: {e}")
         time.sleep(1)
