@@ -265,15 +265,24 @@ def test_api_restart_mid_ingestion_persistence_and_resume():
     target_tx = txs_a[0].lower().replace("0x", "")
     assert any(
         (e.get("tx_hash", "").lower().replace("0x", "") == target_tx) for e in evs_a
-    ), f"Pre-restart event not visible. Expected tx: {target_tx}, Got events: {evs_a}"  # Restart API mid-ingestion window
+    ), f"Pre-restart event not visible. Expected tx: {target_tx}, Got events: {evs_a}"
+
+    # Restart API mid-ingestion window
     restart_service("api")
-    time.sleep(5)
+    logger.info("Waiting for API to restart and resubscribe to Redis...")
+    time.sleep(10)  # Give API time to start, connect to Redis, and subscribe to Pub/Sub
 
     # Create another tx
     _, recipients_b, txs_b = eth_send_native_transfers(n=1)
+    logger.info(
+        f"Sent post-restart transaction: {txs_b[0]} to recipient: {recipients_b[0]}"
+    )
+
+    # Wait for Rust to process it
+    time.sleep(5)
 
     # After restart, API should come back and return both the pre and post restart events
-    evs_b = poll_api_for_wallet(recipients_b[0], max_wait=60)
+    evs_b = poll_api_for_wallet(recipients_b[0], max_wait=90)
     want_b = txs_b[0].lower().replace("0x", "")
     assert any(
         (e.get("tx_hash", "").lower().replace("0x", "") == want_b) for e in evs_b
