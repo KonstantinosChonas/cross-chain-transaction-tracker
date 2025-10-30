@@ -22,11 +22,11 @@ trap "$SCRIPT_DIR/test-stop.sh" EXIT
 echo "Waiting for services to be ready..."
 sleep 10
 
-# Check API health
+# Check API health (Go API on port 3000)
 echo "Checking API health..."
 max_attempts=30
 attempt=0
-until curl -s http://127.0.0.1:8080/health > /dev/null 2>&1; do
+until curl -s http://127.0.0.1:3000/health > /dev/null 2>&1; do
   attempt=$((attempt + 1))
   if [ $attempt -ge $max_attempts ]; then
     echo "API failed to become healthy after $max_attempts attempts"
