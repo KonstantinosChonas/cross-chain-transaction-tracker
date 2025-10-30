@@ -284,10 +284,13 @@ async fn track_erc20_transfers(
                     token: None,
                 };
 
+                // Only mark as processed if publish succeeds
                 if let Err(e) = publish_event_to_redis(&redis_client, &event).await {
                     error!("Failed to publish event to Redis: {:?}", e);
+                    // Don't mark as processed so it can be retried later
+                } else {
+                    processed_txs.lock().await.insert(event_id);
                 }
-                processed_txs.lock().await.insert(event_id);
 
                 if let Some(bn) = block_number {
                     let mut last = last_block.lock().await;
@@ -347,10 +350,13 @@ async fn track_native_transfers(
                                 slot: None,
                                 token: None,
                             };
+                            // Only mark as processed if publish succeeds
                             if let Err(e) = publish_event_to_redis(&redis_client, &event).await {
                                 error!("Failed to publish event to Redis: {:?}", e);
+                                // Don't mark as processed so it can be retried later
+                            } else {
+                                processed_txs.lock().await.insert(event_id);
                             }
-                            processed_txs.lock().await.insert(event_id);
                         }
                     }
                     let mut last = last_block.lock().await;
@@ -498,7 +504,13 @@ async fn process_eth_block(
 
         if from_watched || to_watched {
             let event_id = format!("eth:{:?}", tx.hash);
-            if processed_txs.lock().await.insert(event_id.clone()) {
+            // Check if already processed before creating the event
+            let already_processed = {
+                let processed = processed_txs.lock().await;
+                processed.contains(&event_id)
+            };
+
+            if !already_processed {
                 let event = Event {
                     event_id: event_id.clone(),
                     chain: "ethereum".into(),
@@ -512,7 +524,9 @@ async fn process_eth_block(
                     slot: None,
                     token: None,
                 };
+                // Only mark as processed if publish succeeds
                 publish_event_to_redis(redis_client, &event).await?;
+                processed_txs.lock().await.insert(event_id);
             }
         }
 
@@ -536,7 +550,14 @@ async fn process_eth_block(
                     {
                         let event_id =
                             format!("eth:{:?}:log{}", tx.hash, log.log_index.unwrap_or_default());
-                        if processed_txs.lock().await.insert(event_id.clone()) {
+
+                        // Check if already processed before creating the event
+                        let already_processed = {
+                            let processed = processed_txs.lock().await;
+                            processed.contains(&event_id)
+                        };
+
+                        if !already_processed {
                             let event = Event {
                                 event_id: event_id.clone(),
                                 chain: "ethereum".into(),
@@ -554,7 +575,9 @@ async fn process_eth_block(
                                     decimals: 18,
                                 }),
                             };
+                            // Only mark as processed if publish succeeds
                             publish_event_to_redis(redis_client, &event).await?;
+                            processed_txs.lock().await.insert(event_id);
                         }
                     }
                 }
@@ -694,10 +717,13 @@ async fn process_solana_transaction(
                 slot: Some(slot),
                 token: None,
             };
+            // Only mark as processed if publish succeeds
             if let Err(e) = publish_event_to_redis(redis_client, &event).await {
                 error!("Failed to publish event to Redis: {:?}", e);
+                // Don't mark as processed so it can be retried later
+            } else {
+                processed_txs.lock().await.insert(event_id.clone());
             }
-            processed_txs.lock().await.insert(event_id.clone());
         }
     }
 
