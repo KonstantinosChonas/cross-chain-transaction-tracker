@@ -210,6 +210,13 @@ def test_message_bus_downtime_redis_retry_and_delivery():
     time.sleep(5)
     start_service("redis")
 
+    # Restart API to ensure clean Redis reconnection. Redis Pub/Sub is lossy - if the API
+    # hasn't reconnected when Rust publishes, the message is dropped. Restarting API
+    # guarantees it will subscribe before Rust's publish retry succeeds.
+    logger.info("Restarting API to ensure clean Redis reconnection...")
+    restart_service("api")
+    time.sleep(5)  # Give API time to start and subscribe
+
     # Poll API; Rust publish has exponential backoff up to ~60s, so allow up to 120s
     events = poll_api_for_wallet(target, max_wait=120)
     found = False

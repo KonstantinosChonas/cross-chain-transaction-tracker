@@ -28,10 +28,7 @@ async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> 
     use retry::retry_with_backoff;
     let payload = serde_json::to_string(event)?;
     // Retry publish with exponential backoff to survive short redis outages
-    // Allow a generous retry window so short Redis outages during tests don't drop events.
-    // attempts counts the initial try + (attempts-1) retries with exponential backoff.
-    // With attempts=10 and base=500ms, total backoff ~0.5*(2^9-1) = ~255.5s.
-    let attempts = 10usize;
+    let attempts = 8usize;
     let base = Duration::from_millis(500);
     let factor = 2.0;
     let event_id = event.event_id.clone();
@@ -40,29 +37,10 @@ async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> 
         let payload = payload.clone();
         async move {
             match client.get_multiplexed_async_connection().await {
-                Ok(mut con) => {
-                    // Ensure at least one subscriber is present to avoid dropping events during API reconnection
-                    // redis command: PUBSUB NUMSUB cross_chain_events -> ["cross_chain_events", count]
-                    let subs: Vec<(String, i64)> = match redis::cmd("PUBSUB")
-                        .arg("NUMSUB")
-                        .arg("cross_chain_events")
-                        .query_async(&mut con)
-                        .await
-                    {
-                        Ok(v) => v,
-                        Err(e) => return Err(anyhow!(e)),
-                    };
-
-                    let sub_count = subs.first().map(|(_, n)| *n).unwrap_or(0);
-                    if sub_count <= 0 {
-                        return Err(anyhow!("no subscribers on channel yet"));
-                    }
-
-                    match con.publish::<_, _, ()>("cross_chain_events", payload).await {
-                        Ok(_) => Ok(()),
-                        Err(e) => Err(anyhow!(e)),
-                    }
-                }
+                Ok(mut con) => match con.publish::<_, _, ()>("cross_chain_events", payload).await {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(anyhow!(e)),
+                },
                 Err(e) => Err(anyhow!(e)),
             }
         }
