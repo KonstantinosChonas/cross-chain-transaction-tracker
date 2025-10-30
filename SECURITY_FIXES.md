@@ -2,7 +2,7 @@
 
 ## Summary
 
-Fixed critical security vulnerabilities in Rust dependencies and corrected GitHub Actions workflow configuration for nightly/scheduled tests.
+Fixed critical security vulnerabilities in Rust dependencies, Go HTTP server security issue, and corrected GitHub Actions workflow configuration for nightly/scheduled tests.
 
 ## Changes Made
 
@@ -59,12 +59,35 @@ deny = ["vulnerability"]  # Only fail on actual vulnerabilities
 
 ### 3. GitHub Actions Workflow Fixes (`.github/workflows/nightly.yml`)
 
-#### Fixed Security Scan Job
+#### Fixed Rust Security Scan
 
 Updated cargo audit command to use the new configuration:
 
 ```yaml
 cargo audit --file audit.toml
+```
+
+#### Fixed Go Security Scan Setup
+
+Added Go setup and dependency installation for gosec to work properly:
+
+```yaml
+- name: Set up Go
+  uses: actions/setup-go@v5
+  with:
+    go-version: "1.20"
+    cache: true
+    cache-dependency-path: go/go.sum
+
+- name: Install Go dependencies
+  working-directory: ./go
+  run: go mod download
+
+- name: Verify Go setup
+  working-directory: ./go
+  run: |
+    go version
+    go mod verify
 ```
 
 #### Fixed Skipped Jobs
@@ -88,6 +111,30 @@ This ensures:
 - ✅ Nightly scheduled runs execute all tests
 - ✅ Manual workflow_dispatch also runs all tests
 - ✅ No more unexplained skipped jobs
+
+### 4. Go Security Fix (`go/cmd/api/main.go`)
+
+#### Fixed G114: HTTP Server Without Timeouts
+
+Replaced `http.ListenAndServe()` with a properly configured `http.Server`:
+
+```go
+server := &http.Server{
+    Addr:              bindAddr,
+    Handler:           r,
+    ReadTimeout:       15 * time.Second,
+    ReadHeaderTimeout: 10 * time.Second,
+    WriteTimeout:      15 * time.Second,
+    IdleTimeout:       60 * time.Second,
+    MaxHeaderBytes:    1 << 20, // 1 MB
+}
+```
+
+**Fixes:**
+
+- ✅ G114 (CWE-676): Prevents potential DoS attacks from slow clients
+- ✅ Adds protection against Slowloris attacks
+- ✅ Prevents resource exhaustion from hanging connections
 
 ## Migration Notes
 

@@ -32,8 +32,8 @@ jobs:
 
       - name: Build Docker images
         run: |
-          docker compose -f infra/test-docker-compose.yml build
-          docker compose -f infra/docker-compose.yml build
+          docker compose -f infra/docker-compose.yml \
+                         -f infra/test-docker-compose.yml build
 
       - name: Run E2E tests
         env:
@@ -61,5 +61,5 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker compose -f infra/docker-compose.yml down -v || true
-          docker compose -f infra/test-docker-compose.yml down -v || true
+          docker compose -f infra/docker-compose.yml \
+                         -f infra/test-docker-compose.yml down -v || true

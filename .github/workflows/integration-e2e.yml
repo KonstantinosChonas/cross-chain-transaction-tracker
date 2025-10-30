@@ -54,6 +54,9 @@ jobs:
       - name: Start test infrastructure
         run: docker compose -f infra/test-docker-compose.yml up -d --wait
 
+      - name: Show container status
+        run: docker compose -f infra/test-docker-compose.yml ps -a
+
       - name: Verify services are ready
         run: |
           echo "Verifying Ethereum node..."
@@ -141,6 +144,9 @@ jobs:
       - name: Start test infrastructure
         run: docker compose -f infra/test-docker-compose.yml up -d --wait
 
+      - name: Show infra container status
+        run: docker compose -f infra/test-docker-compose.yml ps -a
+
       - name: Verify infrastructure is ready
         run: |
           echo "Verifying Ethereum node..."
@@ -155,6 +161,9 @@ jobs:
         run: |
           docker compose -f infra/docker-compose.yml build
           docker compose -f infra/docker-compose.yml up -d --wait
+
+      - name: Show app container status
+        run: docker compose -f infra/docker-compose.yml ps -a
 
       - name: Verify application services
         run: |
@@ -234,6 +243,11 @@ jobs:
           docker compose -f infra/test-docker-compose.yml up -d --wait
           docker compose -f infra/docker-compose.yml build
           docker compose -f infra/docker-compose.yml up -d --wait
+
+      - name: Show all container status
+        run: |
+          docker compose -f infra/test-docker-compose.yml ps -a
+          docker compose -f infra/docker-compose.yml ps -a
 
       - name: Verify all services
         run: |

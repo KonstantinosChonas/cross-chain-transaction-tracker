@@ -599,8 +599,19 @@ func main() {
 		bindAddr = "0.0.0.0:8080"
 	}
 
+	// Create HTTP server with timeouts to prevent resource exhaustion (fixes G114)
+	server := &http.Server{
+		Addr:              bindAddr,
+		Handler:           r,
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
+	}
+
 	log.Infof("api: listening on %s", bindAddr)
-	log.Fatalf("server failed to start: %v", http.ListenAndServe(bindAddr, r))
+	log.Fatalf("server failed to start: %v", server.ListenAndServe())
 }
 
 // --- DB helpers ---
