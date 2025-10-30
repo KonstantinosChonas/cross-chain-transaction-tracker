@@ -350,10 +350,12 @@ jobs:
           go version
           go mod verify
 
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
       - name: Go security scan
-        uses: securego/gosec@master
-        with:
-          args: "-exclude-generated ./go/..."
+        working-directory: ./go
+        run: gosec -exclude-generated ./...
 
   notify:
     name: Notify Results

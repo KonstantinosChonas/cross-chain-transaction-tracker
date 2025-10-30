@@ -45,7 +45,7 @@ def restart_service(name: str):
 
 
 def api_base() -> str:
-    return os.getenv("API_URL", "http://127.0.0.1:8080")
+    return os.getenv("API_URL", "http://127.0.0.1:3000")
 
 
 def wait_for_rust_ready(timeout=60):

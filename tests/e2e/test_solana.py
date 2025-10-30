@@ -205,7 +205,7 @@ def test_solana_e2e(transfer_count):
     )
 
     # 6. Verify API health
-    api_url = os.getenv("API_URL", "http://127.0.0.1:8080")
+    api_url = os.getenv("API_URL", "http://127.0.0.1:3000")
 
     # Check API health
     health_resp = requests.get(f"{api_url}/health", timeout=5)
@@ -421,7 +421,7 @@ def test_solana_e2e(transfer_count):
     # Note: The Rust service may not track this specific transaction unless
     # the watched addresses include our test wallets. For this test, we verify
     # that the API is responding and the infrastructure is working.
-    api_url = os.getenv("API_URL", "http://127.0.0.1:8080")
+    api_url = os.getenv("API_URL", "http://127.0.0.1:3000")
 
     # Check API health
     health_resp = requests.get(f"{api_url}/health", timeout=5)

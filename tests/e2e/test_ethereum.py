@@ -120,7 +120,7 @@ def test_ethereum_e2e(transfer_count):
     logger.info(f"✓ Rust logs show {transfer_count} normalized event(s) were published")
 
     # 5. Poll the API for the transaction(s)
-    api_url = os.getenv("API_URL", "http://127.0.0.1:8080")
+    api_url = os.getenv("API_URL", "http://127.0.0.1:3000")
 
     for idx, (recipient, hex_tx) in enumerate(zip(recipients, tx_hashes)):
         wallet_endpoint = f"{api_url}/wallet/{recipient}/transactions"
