@@ -163,9 +163,8 @@ jobs:
                         f"Mean: {statistics.mean(durations):.3f}s, Median: {statistics.median(durations):.3f}s")
               
               return successful >= num_requests * 0.95  # 95% success rate
-
           if __name__ == "__main__":
-              endpoints = ["/health", "/api/transactions"]
+              endpoints = ["/health", "/transactions"]
               all_passed = True
               for endpoint in endpoints:
                   print(f"\nTesting {endpoint}...")
@@ -263,9 +262,8 @@ jobs:
           docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" > stress-before.txt
 
           # Simulate high transaction volume
-          for i in {1..100}; do
-            curl -X POST http://localhost:3000/api/transactions -H "Content-Type: application/json" \
-              -d '{"chain":"ethereum","hash":"0x'$(openssl rand -hex 32)'"}' &
+          for i in {1..200}; do
+            curl -sf "http://localhost:3000/transactions?limit=10&offset=0" > /dev/null &
           done
           wait
 

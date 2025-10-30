@@ -158,10 +158,11 @@ def run_event_delivery_test():
                 "REDIS_URL": "redis://localhost:6379",
             }
         )
-        go_main = os.path.join(repo_root, "go", "cmd", "api", "main.go").replace(
-            "\\", "/"
+        # Run within the Go module directory so go.mod is discovered
+        go_workdir = os.path.join(repo_root, "go")
+        go_proc = subprocess.Popen(
+            ["go", "run", "./cmd/api"], env=go_env, cwd=go_workdir
         )
-        go_proc = subprocess.Popen(["go", "run", go_main], env=go_env)
         procs.append(go_proc)
 
         # Wait for API to be ready
