@@ -66,7 +66,7 @@ services:
       - TEST_MODE=true
       # Persist events to Postgres for idempotency across restarts
       - POSTGRES_DSN=postgres://testuser:testpassword@postgres:5432/testdb?sslmode=disable
-      - PORT=3000
+      - BIND_ADDR=0.0.0.0:3000
     depends_on:
       redis:
         condition: service_healthy

@@ -353,7 +353,8 @@ jobs:
       - name: Go security scan
         uses: securego/gosec@master
         with:
-          args: "-exclude-generated ./go/..."
+          args: "-exclude-generated ./..."
+        working-directory: ./go
 
   notify:
     name: Notify Results
