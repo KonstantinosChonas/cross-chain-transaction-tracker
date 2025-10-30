@@ -233,6 +233,7 @@ def test_message_bus_downtime_redis_retry_and_delivery():
 
 @pytest.mark.timeout(240)
 def test_api_restart_mid_ingestion_persistence_and_resume():
+
     # Create a tx and wait for it to be visible
     _, recipients_a, txs_a = eth_send_native_transfers(n=1)
     evs_a = poll_api_for_wallet(recipients_a[0], max_wait=60)
@@ -244,9 +245,14 @@ def test_api_restart_mid_ingestion_persistence_and_resume():
         for e in evs_a
     ), "Pre-restart event not visible"
 
+    # Wait a bit to ensure event is persisted to Postgres before API restart
+    import time as _time
+
+    _time.sleep(3)
+
     # Restart API mid-ingestion window
     restart_service("api")
-    time.sleep(5)
+    _time.sleep(5)
 
     # Create another tx
     _, recipients_b, txs_b = eth_send_native_transfers(n=1)
