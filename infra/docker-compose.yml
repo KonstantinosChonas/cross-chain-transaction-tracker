@@ -1,5 +1,4 @@
 services:
-  # Include infrastructure services from test-docker-compose.yml
   postgres:
     image: postgres:14-alpine
     environment:
@@ -44,9 +43,9 @@ services:
     image: solanalabs/solana:v1.18.15
     command: solana-test-validator --bind-address 0.0.0.0 --rpc-port 8899
     ports:
-      - "8899:8899" # RPC
-      - "8900:8900" # Websocket
-      - "1024-1124:1024-1124/udp" # Dynamic ports
+      - "8899:8899"
+      - "8900:8900"
+      - "1024-1124:1024-1124/udp"
     healthcheck:
       test: ["CMD-SHELL", "solana cluster-version --url http://localhost:8899 || exit 1"]
       interval: 10s
@@ -59,21 +58,18 @@ services:
       context: ..
       dockerfile: infra/go.Dockerfile
     ports:
-      - "3000:3000"
+      - "3000:8080"
     environment:
-      # Ensure API connects to test redis when running the combined compose
       - REDIS_URL=redis://redis:6379
       - TEST_MODE=true
-      # Persist events to Postgres for idempotency across restarts
       - POSTGRES_DSN=postgres://testuser:testpassword@postgres:5432/testdb?sslmode=disable
-      - PORT=3000
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -96,7 +92,6 @@ services:
       - LOG_LEVEL=info
       - WATCHED_ADDRESSES_ETH=
       - WATCHED_ADDRESSES_SOL=
-      - PORT=8080
     depends_on:
       redis:
         condition: service_healthy

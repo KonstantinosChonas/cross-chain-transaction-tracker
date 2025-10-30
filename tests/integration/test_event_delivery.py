@@ -101,7 +101,8 @@ def cleanup(procs):
     # No need to cleanup TestToken.sol anymore
 
 
-def main():
+def run_event_delivery_test():
+    """Core test routine: raises Exception on failure, always cleans up."""
     procs = []
     try:
         # Start test infrastructure
@@ -204,9 +205,9 @@ def main():
 
         print("Test passed successfully!")
 
-    except Exception as e:
-        print(f"Test failed: {e}")
-        sys.exit(1)
+    except Exception:
+        # Re-raise so pytest can fail the test and report nicely
+        raise
 
     finally:
         # Cleanup
@@ -215,5 +216,19 @@ def main():
         subprocess.run(["bash", stop_sh])
 
 
+def main():
+    try:
+        run_event_delivery_test()
+        sys.exit(0)
+    except Exception as e:
+        print(f"Test failed: {e}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()
+
+
+# Pytest entrypoint
+def test_event_delivery():
+    run_event_delivery_test()
