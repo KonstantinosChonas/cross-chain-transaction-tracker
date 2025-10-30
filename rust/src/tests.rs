@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use ethers::types::{Address, Bytes, Log, H256, U256, U64};
     use serde::{Deserialize, Serialize};
     use std::fs;

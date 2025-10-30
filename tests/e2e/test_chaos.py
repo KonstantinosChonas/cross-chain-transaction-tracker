@@ -237,6 +237,7 @@ def test_api_restart_mid_ingestion_persistence_and_resume():
     # Create a tx and wait for it to be visible
     _, recipients_a, txs_a = eth_send_native_transfers(n=1)
     evs_a = poll_api_for_wallet(recipients_a[0], max_wait=60)
+    print("[DEBUG] API response before restart:", evs_a)
     assert any(
         (
             e.get("tx_hash", "").lower().replace("0x", "")

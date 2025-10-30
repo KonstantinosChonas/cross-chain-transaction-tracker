@@ -99,15 +99,21 @@ jobs:
 
       - name: Start test infrastructure
         run: |
-          docker compose -f infra/test-docker-compose.yml up -d
-          docker compose -f infra/docker-compose.yml up -d
+          docker compose -f infra/test-docker-compose.yml up -d --wait
+          docker compose -f infra/docker-compose.yml build
+          docker compose -f infra/docker-compose.yml up -d --wait
 
-      - name: Wait for services
+      - name: Verify services are ready
         run: |
-          timeout 120 bash -c 'until curl -sf http://localhost:8545 > /dev/null; do sleep 2; done'
-          timeout 120 bash -c 'until curl -sf http://localhost:8899 > /dev/null; do sleep 2; done'
-          timeout 90 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do sleep 2; done'
-          timeout 90 bash -c 'until curl -sf http://localhost:3000/health > /dev/null; do sleep 2; done'
+          echo "Verifying infrastructure..."
+          curl -sf http://localhost:8545 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' || exit 1
+          curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
+          echo "Verifying application services..."
+          curl -sf http://localhost:8080/health || exit 1
+          curl -sf http://localhost:3000/health || exit 1
+          echo "All services ready!"
 
       - name: Run load tests
         run: |
@@ -173,8 +179,8 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker compose -f infra/docker-compose.yml down -v
-          docker compose -f infra/test-docker-compose.yml down -v
+          docker compose -f infra/docker-compose.yml down -v || true
+          docker compose -f infra/test-docker-compose.yml down -v || true
 
   test-stress:
     name: Stress Tests
@@ -190,13 +196,15 @@ jobs:
 
       - name: Start services
         run: |
-          docker compose -f infra/test-docker-compose.yml up -d
-          docker compose -f infra/docker-compose.yml up -d
+          docker compose -f infra/test-docker-compose.yml up -d --wait
+          docker compose -f infra/docker-compose.yml build
+          docker compose -f infra/docker-compose.yml up -d --wait
 
-      - name: Wait for services
+      - name: Verify services are ready
         run: |
-          timeout 120 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do sleep 2; done'
-          timeout 120 bash -c 'until curl -sf http://localhost:3000/health > /dev/null; do sleep 2; done'
+          curl -sf http://localhost:8080/health || exit 1
+          curl -sf http://localhost:3000/health || exit 1
+          echo "All services ready!"
 
       - name: Run stress tests
         run: |
@@ -229,8 +237,8 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker compose -f infra/docker-compose.yml down -v
-          docker compose -f infra/test-docker-compose.yml down -v
+          docker compose -f infra/docker-compose.yml down -v || true
+          docker compose -f infra/test-docker-compose.yml down -v || true
 
   test-chaos:
     name: Chaos Engineering Tests
@@ -256,13 +264,15 @@ jobs:
 
       - name: Start services
         run: |
-          docker compose -f infra/test-docker-compose.yml up -d
-          docker compose -f infra/docker-compose.yml up -d
+          docker compose -f infra/test-docker-compose.yml up -d --wait
+          docker compose -f infra/docker-compose.yml build
+          docker compose -f infra/docker-compose.yml up -d --wait
 
-      - name: Wait for services
+      - name: Verify services are ready
         run: |
-          timeout 120 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do sleep 2; done'
-          timeout 120 bash -c 'until curl -sf http://localhost:3000/health > /dev/null; do sleep 2; done'
+          curl -sf http://localhost:8080/health || exit 1
+          curl -sf http://localhost:3000/health || exit 1
+          echo "All services ready!"
 
       - name: Run chaos tests
         working-directory: ./tests/e2e
@@ -271,8 +281,8 @@ jobs:
       - name: Collect chaos test logs
         if: failure()
         run: |
-          docker compose -f infra/docker-compose.yml logs > chaos-app-logs.txt
-          docker compose -f infra/test-docker-compose.yml logs > chaos-infra-logs.txt
+          docker compose -f infra/docker-compose.yml logs > chaos-app-logs.txt || true
+          docker compose -f infra/test-docker-compose.yml logs > chaos-infra-logs.txt || true
 
       - name: Upload chaos test artifacts
         if: failure()
@@ -287,8 +297,8 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker compose -f infra/docker-compose.yml down -v
-          docker compose -f infra/test-docker-compose.yml down -v
+          docker compose -f infra/docker-compose.yml down -v || true
+          docker compose -f infra/test-docker-compose.yml down -v || true
 
   security-scan:
     name: Security Scanning

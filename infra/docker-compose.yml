@@ -1,23 +1,90 @@
 services:
+  # Include infrastructure services from test-docker-compose.yml
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpassword
+      POSTGRES_DB: testdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    command: ["anvil", "--host", "0.0.0.0"]
+    environment:
+      - ANVIL_IP_ADDR=0.0.0.0
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8545"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  solana:
+    image: solanalabs/solana:v1.18.15
+    command: solana-test-validator --bind-address 0.0.0.0 --rpc-port 8899
+    ports:
+      - "8899:8899" # RPC
+      - "8900:8900" # Websocket
+      - "1024-1124:1024-1124/udp" # Dynamic ports
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8899/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   api:
     build:
       context: ..
       dockerfile: infra/go.Dockerfile
     ports:
-      - "8080:8080"
+      - "3000:3000"
     environment:
       # Ensure API connects to test redis when running the combined compose
       - REDIS_URL=redis://redis:6379
       - TEST_MODE=true
       # Persist events to Postgres for idempotency across restarts
       - POSTGRES_DSN=postgres://testuser:testpassword@postgres:5432/testdb?sslmode=disable
+      - PORT=3000
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   rust:
     build:
       context: ..
       dockerfile: infra/rust.Dockerfile
+    ports:
+      - "8080:8080"
     environment:
       - RUST_LOG=info
       - ETH_RPC_URL=http://anvil:8545
@@ -29,8 +96,20 @@ services:
       - LOG_LEVEL=info
       - WATCHED_ADDRESSES_ETH=
       - WATCHED_ADDRESSES_SOL=
+      - PORT=8080
     depends_on:
-      - api
-      - redis
-      - anvil
-      - solana
+      redis:
+        condition: service_healthy
+      anvil:
+        condition: service_healthy
+      solana:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:

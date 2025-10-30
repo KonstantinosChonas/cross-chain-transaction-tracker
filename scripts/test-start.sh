@@ -4,7 +4,9 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-docker compose -f "$REPO_ROOT/infra/test-docker-compose.yml" up -d
-# Use absolute path to docker-compose files; include main infra and test overrides so
-# api and rust services are started alongside test services (postgres, anvil, solana).
-docker compose -f "$REPO_ROOT/infra/docker-compose.yml" -f "$REPO_ROOT/infra/test-docker-compose.yml" up -d
+# Start test infrastructure first
+docker compose -f "$REPO_ROOT/infra/test-docker-compose.yml" up -d --wait
+
+# Build and start application services
+docker compose -f "$REPO_ROOT/infra/docker-compose.yml" build
+docker compose -f "$REPO_ROOT/infra/docker-compose.yml" up -d --wait

@@ -52,14 +52,17 @@ jobs:
           pip install -r requirements.txt
 
       - name: Start test infrastructure
-        run: docker compose -f infra/test-docker-compose.yml up -d
+        run: docker compose -f infra/test-docker-compose.yml up -d --wait
 
-      - name: Wait for services to be ready
+      - name: Verify services are ready
         run: |
-          echo "Waiting for Ethereum node..."
-          timeout 60 bash -c 'until curl -sf http://localhost:8545 > /dev/null; do sleep 2; done'
-          echo "Waiting for Solana node..."
-          timeout 60 bash -c 'until curl -sf http://localhost:8899 > /dev/null; do sleep 2; done'
+          echo "Verifying Ethereum node..."
+          curl -sf http://localhost:8545 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' || exit 1
+          echo "Verifying Solana node..."
+          curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
+          echo "All services ready!"
 
       - name: Build Rust service
         working-directory: ./rust
@@ -136,26 +139,30 @@ jobs:
           pip install -r requirements.txt
 
       - name: Start test infrastructure
-        run: docker compose -f infra/test-docker-compose.yml up -d
+        run: docker compose -f infra/test-docker-compose.yml up -d --wait
 
-      - name: Wait for services to be ready
+      - name: Verify infrastructure is ready
         run: |
-          echo "Waiting for Ethereum node..."
-          timeout 90 bash -c 'until curl -sf http://localhost:8545 > /dev/null; do sleep 2; done'
-          echo "Waiting for Solana node..."
-          timeout 90 bash -c 'until curl -sf http://localhost:8899 > /dev/null; do sleep 2; done'
+          echo "Verifying Ethereum node..."
+          curl -sf http://localhost:8545 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' || exit 1
+          echo "Verifying Solana node..."
+          curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
+          echo "Infrastructure ready!"
 
-      - name: Build and start services
+      - name: Build and start application services
         run: |
           docker compose -f infra/docker-compose.yml build
-          docker compose -f infra/docker-compose.yml up -d
+          docker compose -f infra/docker-compose.yml up -d --wait
 
-      - name: Wait for application services
+      - name: Verify application services
         run: |
-          echo "Waiting for Rust tracker..."
-          timeout 60 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do sleep 2; done'
-          echo "Waiting for Go API..."
-          timeout 60 bash -c 'until curl -sf http://localhost:3000/health > /dev/null; do sleep 2; done'
+          echo "Verifying Rust tracker..."
+          curl -sf http://localhost:8080/health || exit 1
+          echo "Verifying Go API..."
+          curl -sf http://localhost:3000/health || exit 1
+          echo "All application services ready!"
 
       - name: Run E2E tests - ${{ matrix.test-suite }}
         working-directory: ./tests/e2e
@@ -176,8 +183,8 @@ jobs:
       - name: Collect application logs
         if: failure()
         run: |
-          docker compose -f infra/docker-compose.yml logs > app-logs.txt
-          docker compose -f infra/test-docker-compose.yml logs > infra-logs.txt
+          docker compose -f infra/docker-compose.yml logs > app-logs.txt || true
+          docker compose -f infra/test-docker-compose.yml logs > infra-logs.txt || true
 
       - name: Upload test artifacts
         if: failure()
@@ -194,14 +201,16 @@ jobs:
       - name: Stop all services
         if: always()
         run: |
-          docker compose -f infra/docker-compose.yml down -v
-          docker compose -f infra/test-docker-compose.yml down -v
+          docker compose -f infra/docker-compose.yml down -v || true
+          docker compose -f infra/test-docker-compose.yml down -v || true
 
   test-e2e-full:
     name: Full E2E Test Suite
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+    if: |
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))) ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.suite == 'all' || github.event.inputs.suite == 'e2e'))
     needs: [test-integration, test-e2e]
     steps:
       - name: Checkout code
@@ -222,15 +231,23 @@ jobs:
 
       - name: Start full test environment
         run: |
-          docker compose -f infra/test-docker-compose.yml up -d
-          docker compose -f infra/docker-compose.yml up -d
+          docker compose -f infra/test-docker-compose.yml up -d --wait
+          docker compose -f infra/docker-compose.yml build
+          docker compose -f infra/docker-compose.yml up -d --wait
 
-      - name: Wait for all services
+      - name: Verify all services
         run: |
-          timeout 120 bash -c 'until curl -sf http://localhost:8545 > /dev/null; do sleep 2; done'
-          timeout 120 bash -c 'until curl -sf http://localhost:8899 > /dev/null; do sleep 2; done'
-          timeout 90 bash -c 'until curl -sf http://localhost:8080/health > /dev/null; do sleep 2; done'
-          timeout 90 bash -c 'until curl -sf http://localhost:3000/health > /dev/null; do sleep 2; done'
+          echo "Verifying Ethereum node..."
+          curl -sf http://localhost:8545 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' || exit 1
+          echo "Verifying Solana node..."
+          curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
+          echo "Verifying Rust tracker..."
+          curl -sf http://localhost:8080/health || exit 1
+          echo "Verifying Go API..."
+          curl -sf http://localhost:3000/health || exit 1
+          echo "All services ready!"
 
       - name: Run complete E2E test suite
         working-directory: ./tests/e2e
@@ -239,8 +256,8 @@ jobs:
       - name: Collect all logs
         if: failure()
         run: |
-          docker compose -f infra/docker-compose.yml logs > full-app-logs.txt
-          docker compose -f infra/test-docker-compose.yml logs > full-infra-logs.txt
+          docker compose -f infra/docker-compose.yml logs > full-app-logs.txt || true
+          docker compose -f infra/test-docker-compose.yml logs > full-infra-logs.txt || true
 
       - name: Upload comprehensive artifacts
         if: failure()
@@ -256,5 +273,5 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker compose -f infra/docker-compose.yml down -v
-          docker compose -f infra/test-docker-compose.yml down -v
+          docker compose -f infra/docker-compose.yml down -v || true
+          docker compose -f infra/test-docker-compose.yml down -v || true
