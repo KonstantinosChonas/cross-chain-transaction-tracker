@@ -1,0 +1,20 @@
+# cargo-audit configuration
+# https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+
+[advisories]
+# Ignore advisories for specific IDs
+ignore = []
+
+# Warn for unmaintained crates instead of failing
+unmaintained = "warn"
+
+# Warn for unsound crates instead of failing  
+unsound = "warn"
+
+# Warn for yanked crates instead of failing
+yanked = "warn"
+
+[output]
+# Deny warnings by default, but since we set specific types to "warn" above,
+# only actual vulnerabilities will cause failures
+deny = ["vulnerability"]

@@ -1,0 +1,13 @@
+# Cargo configuration for cross-chain-transaction-tracker
+
+[build]
+# Enable incremental compilation for faster builds
+incremental = true
+
+[net]
+# Retry on network errors
+retry = 3
+
+[audit]
+# Path to audit configuration
+config = "audit.toml"

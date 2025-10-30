@@ -2,7 +2,23 @@
 
 ## Issues Fixed
 
-### 1. **Docker Compose Service Dependencies**
+### 1. **Health Check Tool Availability**
+
+**Problem**: Health checks were failing because containers didn't have the required tools:
+
+- Anvil (foundry) container doesn't have `curl` installed
+- Solana container doesn't have `curl` installed
+- Health checks were using `curl` which caused "container is unhealthy" errors
+
+**Solution**:
+
+- Updated Anvil health check to use `cast client` (built into foundry image)
+- Updated Solana health check to use `solana cluster-version` (built into solana image)
+- Added `curl` to Go API runtime image (Alpine)
+- Added `curl` to Rust runtime image (Debian)
+- Changed Go health check from `wget` to `curl` for consistency
+
+### 2. **Docker Compose Service Dependencies**
 
 **Problem**: Services in `docker-compose.yml` depended on `redis`, `postgres`, `anvil`, and `solana` which were only defined in `test-docker-compose.yml`, causing errors like:
 

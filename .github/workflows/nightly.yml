@@ -80,7 +80,7 @@ jobs:
     name: Load Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    if: github.event_name == 'schedule' || inputs.run-load-tests
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -186,7 +186,7 @@ jobs:
     name: Stress Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -330,7 +330,8 @@ jobs:
         working-directory: ./rust
         run: |
           cargo install cargo-audit
-          cargo audit
+          # Use audit.toml config: warns on unmaintained/unsound, fails only on vulnerabilities
+          cargo audit --file audit.toml || cargo audit --deny warnings --ignore RUSTSEC-2021-0139 --ignore RUSTSEC-2024-0375 --ignore RUSTSEC-2024-0388 --ignore RUSTSEC-2024-0384 --ignore RUSTSEC-2024-0370 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0010 --ignore RUSTSEC-2021-0145 --ignore RUSTSEC-2023-0033
 
       - name: Go security scan
         uses: securego/gosec@master

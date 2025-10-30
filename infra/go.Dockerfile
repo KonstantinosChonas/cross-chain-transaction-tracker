@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /api ./cmd/a
 
 # Runtime
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata curl
 WORKDIR /app
 COPY --from=builder /api /app/api
 
@@ -27,6 +27,6 @@ EXPOSE 8080
 
 # Basic healthcheck hitting the health endpoint if available; adjust path if needed
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:8080/health || exit 1
+    CMD curl -f http://127.0.0.1:8080/health || exit 1
 
 CMD ["/app/api"]
