@@ -250,14 +250,22 @@ def test_api_restart_mid_ingestion_persistence_and_resume():
 
     # Create a tx and wait for it to be visible
     _, recipients_a, txs_a = eth_send_native_transfers(n=1)
+    logger.info(f"Sent transaction: {txs_a[0]} to recipient: {recipients_a[0]}")
+
     evs_a = poll_api_for_wallet(recipients_a[0], max_wait=60)
+    logger.info(
+        f"Received {len(evs_a)} events from API for recipient {recipients_a[0]}"
+    )
+    if evs_a:
+        logger.info(f"Events: {evs_a}")
+
     assert any(
         (
             e.get("tx_hash", "").lower().replace("0x", "")
             == txs_a[0].lower().replace("0x", "")
         )
         for e in evs_a
-    ), "Pre-restart event not visible"
+    ), f"Pre-restart event not visible. Expected tx: {txs_a[0]}, Got events: {evs_a}"
 
     # Restart API mid-ingestion window
     restart_service("api")

@@ -525,8 +525,12 @@ async fn process_eth_block(
                     token: None,
                 };
                 // Only mark as processed if publish succeeds
-                publish_event_to_redis(redis_client, &event).await?;
-                processed_txs.lock().await.insert(event_id);
+                if let Err(e) = publish_event_to_redis(redis_client, &event).await {
+                    error!("Failed to publish event to Redis: {:?}", e);
+                    // Don't mark as processed so it can be retried later
+                } else {
+                    processed_txs.lock().await.insert(event_id);
+                }
             }
         }
 
@@ -576,8 +580,12 @@ async fn process_eth_block(
                                 }),
                             };
                             // Only mark as processed if publish succeeds
-                            publish_event_to_redis(redis_client, &event).await?;
-                            processed_txs.lock().await.insert(event_id);
+                            if let Err(e) = publish_event_to_redis(redis_client, &event).await {
+                                error!("Failed to publish event to Redis: {:?}", e);
+                                // Don't mark as processed so it can be retried later
+                            } else {
+                                processed_txs.lock().await.insert(event_id);
+                            }
                         }
                     }
                 }

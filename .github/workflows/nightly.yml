@@ -95,25 +95,40 @@ jobs:
 
       - name: Install load testing tools
         run: |
-          pip install locust pytest pytest-benchmark
+          python -m pip install --upgrade pip
+          pip install locust pytest pytest-benchmark requests
 
       - name: Start test infrastructure
+        run: docker compose -f infra/test-docker-compose.yml up -d --wait
+
+      - name: Show infra container status
+        run: docker compose -f infra/test-docker-compose.yml ps -a
+
+      - name: Verify infrastructure is ready
         run: |
-          docker compose -f infra/test-docker-compose.yml up -d --wait
+          echo "Verifying Ethereum node..."
+          curl -sf http://localhost:8545 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' || exit 1
+          echo "Verifying Solana node..."
+          curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
+          echo "Infrastructure ready!"
+
+      - name: Build and start application services
+        run: |
           docker compose -f infra/docker-compose.yml build
           docker compose -f infra/docker-compose.yml up -d --wait
 
-      - name: Verify services are ready
+      - name: Show app container status
+        run: docker compose -f infra/docker-compose.yml ps -a
+
+      - name: Verify application services
         run: |
-          echo "Verifying infrastructure..."
-          curl -sf http://localhost:8545 -X POST -H "Content-Type: application/json" \
-            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' || exit 1
-          curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
-            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
-          echo "Verifying application services..."
+          echo "Verifying Rust tracker..."
           curl -sf http://localhost:8080/health || exit 1
+          echo "Verifying Go API..."
           curl -sf http://localhost:3000/health || exit 1
-          echo "All services ready!"
+          echo "All application services ready!"
 
       - name: Run load tests
         run: |
@@ -176,6 +191,22 @@ jobs:
             load-test-logs.txt
           retention-days: 30
 
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          docker compose -f infra/docker-compose.yml logs > app-logs.txt || true
+          docker compose -f infra/test-docker-compose.yml logs > infra-logs.txt || true
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-failure-artifacts
+          path: |
+            app-logs.txt
+            infra-logs.txt
+          retention-days: 7
+
       - name: Cleanup
         if: always()
         run: |
@@ -194,15 +225,35 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Start services
+      - name: Start test infrastructure
+        run: docker compose -f infra/test-docker-compose.yml up -d --wait
+
+      - name: Show infra container status
+        run: docker compose -f infra/test-docker-compose.yml ps -a
+
+      - name: Verify infrastructure is ready
         run: |
-          docker compose -f infra/test-docker-compose.yml up -d --wait
+          echo "Verifying Ethereum node..."
+          curl -sf http://localhost:8545 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' || exit 1
+          echo "Verifying Solana node..."
+          curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
+          echo "Infrastructure ready!"
+
+      - name: Build and start application services
+        run: |
           docker compose -f infra/docker-compose.yml build
           docker compose -f infra/docker-compose.yml up -d --wait
 
+      - name: Show app container status
+        run: docker compose -f infra/docker-compose.yml ps -a
+
       - name: Verify services are ready
         run: |
+          echo "Verifying Rust tracker..."
           curl -sf http://localhost:8080/health || exit 1
+          echo "Verifying Go API..."
           curl -sf http://localhost:3000/health || exit 1
           echo "All services ready!"
 
@@ -234,6 +285,22 @@ jobs:
           path: stress-*.txt
           retention-days: 14
 
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          docker compose -f infra/docker-compose.yml logs > stress-app-logs.txt || true
+          docker compose -f infra/test-docker-compose.yml logs > stress-infra-logs.txt || true
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-test-failure-artifacts
+          path: |
+            stress-app-logs.txt
+            stress-infra-logs.txt
+          retention-days: 7
+
       - name: Cleanup
         if: always()
         run: |
@@ -256,21 +323,42 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install Python dependencies
         working-directory: ./tests/e2e
-        run: pip install -r requirements.txt
-
-      - name: Start services
         run: |
-          docker compose -f infra/test-docker-compose.yml up -d --wait
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start test infrastructure
+        run: docker compose -f infra/test-docker-compose.yml up -d --wait
+
+      - name: Show infra container status
+        run: docker compose -f infra/test-docker-compose.yml ps -a
+
+      - name: Verify infrastructure is ready
+        run: |
+          echo "Verifying Ethereum node..."
+          curl -sf http://localhost:8545 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' || exit 1
+          echo "Verifying Solana node..."
+          curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
+          echo "Infrastructure ready!"
+
+      - name: Build and start application services
+        run: |
           docker compose -f infra/docker-compose.yml build
           docker compose -f infra/docker-compose.yml up -d --wait
 
+      - name: Show app container status
+        run: docker compose -f infra/docker-compose.yml ps -a
+
       - name: Verify services are ready
         run: |
+          echo "Verifying Rust tracker..."
           curl -sf http://localhost:8080/health || exit 1
+          echo "Verifying Go API..."
           curl -sf http://localhost:3000/health || exit 1
           echo "All services ready!"
 
