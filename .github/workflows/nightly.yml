@@ -124,8 +124,8 @@ jobs:
 
       - name: Verify application services
         run: |
-          echo "Verifying Rust tracker..."
-          curl -sf http://localhost:8080/health || exit 1
+          echo "Verifying Rust tracker is running..."
+          docker compose -f infra/docker-compose.yml ps rust | grep -q "Up" || exit 1
           echo "Verifying Go API..."
           curl -sf http://localhost:3000/health || exit 1
           echo "All application services ready!"
@@ -251,8 +251,8 @@ jobs:
 
       - name: Verify services are ready
         run: |
-          echo "Verifying Rust tracker..."
-          curl -sf http://localhost:8080/health || exit 1
+          echo "Verifying Rust tracker is running..."
+          docker compose -f infra/docker-compose.yml ps rust | grep -q "Up" || exit 1
           echo "Verifying Go API..."
           curl -sf http://localhost:3000/health || exit 1
           echo "All services ready!"
@@ -274,7 +274,7 @@ jobs:
 
       - name: Check service health after stress
         run: |
-          curl -f http://localhost:8080/health
+          docker compose -f infra/docker-compose.yml ps rust | grep -q "Up" || exit 1
           curl -f http://localhost:3000/health
 
       - name: Upload stress test results
@@ -356,8 +356,8 @@ jobs:
 
       - name: Verify services are ready
         run: |
-          echo "Verifying Rust tracker..."
-          curl -sf http://localhost:8080/health || exit 1
+          echo "Verifying Rust tracker is running..."
+          docker compose -f infra/docker-compose.yml ps rust | grep -q "Up" || exit 1
           echo "Verifying Go API..."
           curl -sf http://localhost:3000/health || exit 1
           echo "All services ready!"

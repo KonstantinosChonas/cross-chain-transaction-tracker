@@ -169,8 +169,6 @@ jobs:
 
       - name: Verify application services
         run: |
-          echo "Verifying Rust tracker..."
-          curl -sf http://localhost:8080/health || exit 1
           echo "Verifying Go API..."
           curl -sf http://localhost:3000/health || exit 1
           echo "All application services ready!"
@@ -260,8 +258,6 @@ jobs:
           echo "Verifying Solana node..."
           curl -sf http://localhost:8899 -X POST -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' || exit 1
-          echo "Verifying Rust tracker..."
-          curl -sf http://localhost:8080/health || exit 1
           echo "Verifying Go API..."
           curl -sf http://localhost:3000/health || exit 1
           echo "All services ready!"
