@@ -215,13 +215,15 @@ def test_message_bus_downtime_redis_retry_and_delivery():
     # Wait 3 seconds to let Rust detect the tx and exhaust early retry attempts.
     # This ensures Rust is in the later retry stages (4s, 8s, 16s...) when we bring services back.
     time.sleep(3)
-    
+
     # Restart API first to give it time to initialize before Redis comes back.
     # This way, when Redis starts and Rust's next retry succeeds, API is already subscribed.
     logger.info("Restarting API before Redis to ensure it's ready to subscribe...")
     restart_service("api")
-    time.sleep(3)  # Give API time to initialize (but Redis still down, so no messages yet)
-    
+    time.sleep(
+        3
+    )  # Give API time to initialize (but Redis still down, so no messages yet)
+
     # Now start Redis. API is already running and will subscribe immediately.
     start_service("redis")
     time.sleep(3)  # Give API time to establish Redis subscription
@@ -241,6 +243,11 @@ def test_message_bus_downtime_redis_retry_and_delivery():
 
 @pytest.mark.timeout(240)
 def test_api_restart_mid_ingestion_persistence_and_resume():
+    # Ensure Rust tracker is active before starting test
+    logger.info("Waiting for Rust poller to become active...")
+    assert wait_for_rust_ready(timeout=60), "Rust poller did not start in time"
+    time.sleep(2)  # Give it a moment to establish baseline
+
     # Create a tx and wait for it to be visible
     _, recipients_a, txs_a = eth_send_native_transfers(n=1)
     evs_a = poll_api_for_wallet(recipients_a[0], max_wait=60)
