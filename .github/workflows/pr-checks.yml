@@ -40,12 +40,22 @@ jobs:
         working-directory: ./rust
         run: cargo test --bins
 
-      - name: Upload test results
+      - name: Collect additional Rust test artifacts
+        if: failure()
+        run: |
+          mkdir -p rust-test-artifacts
+          cp -v rust/target/debug/deps/*.log rust-test-artifacts/ 2>/dev/null || true
+          cp -v rust/target/debug/test-*.json rust-test-artifacts/ 2>/dev/null || true
+          cp -v rust/target/debug/*.db rust-test-artifacts/ 2>/dev/null || true
+          cp -v tests/fixtures/ethereum/*.json rust-test-artifacts/ 2>/dev/null || true
+          cp -v tests/fixtures/solana/*.json rust-test-artifacts/ 2>/dev/null || true
+        shell: bash
+      - name: Upload Rust test artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: rust-test-logs
-          path: rust/target/debug/deps/*.log
+          name: rust-test-artifacts
+          path: rust-test-artifacts/
           retention-days: 7
 
   test-unit-go:
@@ -74,12 +84,22 @@ jobs:
         working-directory: ./go
         run: go test -v ./...
 
-      - name: Upload test results
+      - name: Collect additional Go test artifacts
+        if: failure()
+        run: |
+          mkdir -p go-test-artifacts
+          cp -v go/*.log go-test-artifacts/ 2>/dev/null || true
+          cp -v go/test-*.json go-test-artifacts/ 2>/dev/null || true
+          cp -v go/*.db go-test-artifacts/ 2>/dev/null || true
+          cp -v tests/fixtures/ethereum/*.json go-test-artifacts/ 2>/dev/null || true
+          cp -v tests/fixtures/solana/*.json go-test-artifacts/ 2>/dev/null || true
+        shell: bash
+      - name: Upload Go test artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: go-test-logs-${{ matrix.go-version }}
-          path: go/*.log
+          name: go-test-artifacts-${{ matrix.go-version }}
+          path: go-test-artifacts/
           retention-days: 7
 
   test-go-race:

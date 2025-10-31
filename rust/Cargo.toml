@@ -28,3 +28,4 @@ redis = { version = "0.25.4", features = ["tokio-comp"] }
 
 [dev-dependencies]
 serial_test = "2.0"
+env_logger = "0.11"

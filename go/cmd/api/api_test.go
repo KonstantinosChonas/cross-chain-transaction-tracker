@@ -16,7 +16,15 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	log "github.com/sirupsen/logrus"
 )
+
+func init() {
+	// Set logrus to JSON formatter for structured logs in tests
+	log.SetFormatter(&log.JSONFormatter{})
+	log.SetOutput(os.Stdout)
+	log.SetLevel(log.DebugLevel)
+}
 
 var update = flag.Bool("update", false, "update golden files")
 

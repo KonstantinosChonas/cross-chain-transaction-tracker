@@ -2,9 +2,18 @@
 mod unit_tests {
     use ethers::types::{Address, Bytes, Log, H256, U256, U64};
     use serde::{Deserialize, Serialize};
+    use std::env;
     use std::fs;
     use std::path::PathBuf;
     use std::str::FromStr;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+    fn init_logging() {
+        INIT.call_once(|| {
+            let _ = env_logger::builder().is_test(true).try_init();
+        });
+    }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct NormalizedTransaction {
@@ -24,6 +33,7 @@ mod unit_tests {
     }
 
     fn load_fixture(chain: &str, name: &str) -> String {
+        init_logging();
         let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("tests")
@@ -34,6 +44,7 @@ mod unit_tests {
     }
 
     fn load_golden(name: &str) -> String {
+        init_logging();
         let golden_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("tests")
@@ -43,6 +54,7 @@ mod unit_tests {
     }
 
     fn save_golden(name: &str, content: &str) {
+        init_logging();
         let golden_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("tests")
@@ -52,6 +64,7 @@ mod unit_tests {
     }
 
     fn parse_ethereum_transaction(json_str: &str) -> NormalizedTransaction {
+        init_logging();
         let json: serde_json::Value = serde_json::from_str(json_str).expect("Failed to parse JSON");
 
         let block_number = if let Some(block_hex) = json["blockNumber"].as_str() {
