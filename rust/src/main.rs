@@ -62,6 +62,67 @@ async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> 
     }
 }
 
+/// Fetch ERC20 token metadata (symbol and decimals) from the contract
+async fn fetch_token_metadata<M: Middleware>(provider: &M, token_address: Address) -> (String, u8) {
+    // Try to call symbol() - function selector 0x95d89b41
+    let symbol = match provider
+        .call(
+            &ethers::types::transaction::eip2718::TypedTransaction::Legacy(
+                ethers::types::TransactionRequest {
+                    to: Some(ethers::types::NameOrAddress::Address(token_address)),
+                    data: Some(ethers::core::utils::hex::decode("95d89b41").unwrap().into()),
+                    ..Default::default()
+                },
+            ),
+            None,
+        )
+        .await
+    {
+        Ok(bytes) => {
+            // Decode as string (ABI encoded string starts with offset, length, then data)
+            if bytes.len() >= 64 {
+                // Skip offset (32 bytes), read length (32 bytes)
+                let len = U256::from_big_endian(&bytes[32..64]).as_usize();
+                if bytes.len() >= 64 + len {
+                    String::from_utf8(bytes[64..64 + len].to_vec())
+                        .unwrap_or_else(|_| "UNKNOWN".to_string())
+                } else {
+                    "UNKNOWN".to_string()
+                }
+            } else {
+                "UNKNOWN".to_string()
+            }
+        }
+        Err(_) => "UNKNOWN".to_string(),
+    };
+
+    // Try to call decimals() - function selector 0x313ce567
+    let decimals = match provider
+        .call(
+            &ethers::types::transaction::eip2718::TypedTransaction::Legacy(
+                ethers::types::TransactionRequest {
+                    to: Some(ethers::types::NameOrAddress::Address(token_address)),
+                    data: Some(ethers::core::utils::hex::decode("313ce567").unwrap().into()),
+                    ..Default::default()
+                },
+            ),
+            None,
+        )
+        .await
+    {
+        Ok(bytes) => {
+            if bytes.len() >= 32 {
+                U256::from_big_endian(&bytes[..32]).as_u64() as u8
+            } else {
+                18
+            }
+        }
+        Err(_) => 18,
+    };
+
+    (symbol, decimals)
+}
+
 #[allow(dead_code)]
 #[derive(Deserialize)]
 struct SystemTransfer {
@@ -270,6 +331,9 @@ async fn track_erc20_transfers(
                     None => "".to_string(),
                 };
 
+                // Fetch token metadata
+                let (symbol, decimals) = fetch_token_metadata(&provider, log.address).await;
+
                 let event = Event {
                     event_id: event_id.clone(),
                     chain: "ethereum".into(),
@@ -281,7 +345,11 @@ async fn track_erc20_transfers(
                     value: U256::from_big_endian(&log.data.0).to_string(),
                     event_type: "erc20_transfer".into(),
                     slot: None,
-                    token: None,
+                    token: Some(Token {
+                        address: format!("{:?}", log.address),
+                        symbol,
+                        decimals,
+                    }),
                 };
 
                 // Only mark as processed if publish succeeds
@@ -562,6 +630,10 @@ async fn process_eth_block(
                         };
 
                         if !already_processed {
+                            // Fetch token metadata
+                            let (symbol, decimals) =
+                                fetch_token_metadata(provider, log.address).await;
+
                             let event = Event {
                                 event_id: event_id.clone(),
                                 chain: "ethereum".into(),
@@ -575,8 +647,8 @@ async fn process_eth_block(
                                 slot: None,
                                 token: Some(Token {
                                     address: format!("{:?}", log.address),
-                                    symbol: "".into(),
-                                    decimals: 18,
+                                    symbol,
+                                    decimals,
                                 }),
                             };
                             // Only mark as processed if publish succeeds
