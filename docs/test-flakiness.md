@@ -1,14 +1,14 @@
-# Flaky Test Tracking
+# Flaky test tracking
 
 This document tracks flaky tests in the CrossChainTransactionTracker project. Please update this file whenever a flaky test is discovered, fixed, or investigated.
 
-## How to Use
+## How to use
 
 - **Add**: When a test is observed to be flaky (sometimes fails, sometimes passes), add it below.
 - **Update**: When the root cause is found or fixed, update the entry.
 - **Reference**: Link to issues, PRs, or CI runs as evidence.
 
-## Marking Flaky Tests
+## Marking flaky tests
 
 **Rust:**
 
@@ -33,7 +33,7 @@ This document tracks flaky tests in the CrossChainTransactionTracker project. Pl
   }
   ```
 
-## Setting Retries in CI
+## Setting retries in CI
 
 GitHub Actions does not support per-job retries natively, but you can use the `retry` step action or wrap test commands in a retry loop. For critical jobs, consider using a third-party action or custom script.
 
@@ -51,7 +51,7 @@ Update this file and CI as you discover or fix flaky tests.
 
 ---
 
-## Flaky Tests
+## Flaky tests
 
 | Test Name / Path | Language | Symptoms | Frequency | Issue/PR | Status |
 | ---------------- | -------- | -------- | --------- | -------- | ------ |

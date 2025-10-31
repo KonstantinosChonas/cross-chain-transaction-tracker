@@ -1,3 +1,8 @@
+// Package main contains the HTTP API for the Cross-Chain Transaction Tracker.
+//
+// It ingests normalized events from Redis Pub/Sub, optionally persists them to
+// Postgres for durability and idempotency, and exposes REST endpoints and an
+// SSE feed for clients to query or subscribe to live updates.
 package main
 
 import (
@@ -26,12 +31,16 @@ type Health struct {
 	Status string `json:"status"`
 }
 
+// Token describes an ERC-20 or SPL token when the event pertains to a token
+// transfer. Fields are omitted if the event is a native transfer.
 type Token struct {
 	Address  string `json:"address"`
 	Symbol   string `json:"symbol"`
 	Decimals uint8  `json:"decimals"`
 }
 
+// Event is the normalized, chain-agnostic representation of a transaction
+// event emitted by the listener and served by this API.
 type Event struct {
 	EventID   string  `json:"event_id"`
 	Chain     string  `json:"chain"`
@@ -46,7 +55,7 @@ type Event struct {
 	Token     *Token  `json:"token,omitempty"`
 }
 
-// EventFilter struct to hold all filter, sort, and pagination parameters
+// EventFilter holds filter, sort, and pagination parameters for list queries.
 type EventFilter struct {
 	Chain     string
 	Token     string
@@ -70,6 +79,9 @@ type EventStore struct {
 	db                 *pgxpool.Pool
 }
 
+// NewEventStore constructs an in-memory store with soft limits for total
+// events and per-wallet history. It can be augmented with a Postgres backend
+// via AttachDB for durability.
 func NewEventStore(maxTotalEvents, maxEventsPerWallet int) *EventStore {
 	return &EventStore{
 		events:             make([]*Event, 0),
@@ -79,10 +91,15 @@ func NewEventStore(maxTotalEvents, maxEventsPerWallet int) *EventStore {
 	}
 }
 
+// AttachDB connects the store to a Postgres pool to persist events and serve
+// queries from durable storage.
 func (s *EventStore) AttachDB(db *pgxpool.Pool) {
 	s.db = db
 }
 
+// Add inserts an event into the in-memory indexes. Addresses are normalized to
+// lowercase for case-insensitive lookups. Oldest entries are trimmed when
+// limits are exceeded.
 func (s *EventStore) Add(event *Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -340,6 +357,7 @@ func (s *EventStore) GetRecent(filter EventFilter) []*Event {
 	return filteredEvents[filter.Offset:end]
 }
 
+// NewHub creates a simple in-process broadcaster for Server-Sent Events.
 func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[chan []byte]struct{}),
@@ -349,6 +367,7 @@ func NewHub() *Hub {
 	}
 }
 
+// Run processes registrations and broadcasts for all connected SSE clients.
 func (h *Hub) Run() {
 	for {
 		select {
@@ -380,12 +399,15 @@ func (h *Hub) Run() {
 	}
 }
 
+// healthHandler returns a simple JSON health status.
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(Health{Status: "OK"})
 }
 
+// subscribeToEvents consumes the Redis Pub/Sub channel and forwards events to
+// the in-memory store, the optional database, and the SSE hub.
 func subscribeToEvents(ctx context.Context, redisURL string, store *EventStore, hub *Hub) {
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -421,6 +443,7 @@ func subscribeToEvents(ctx context.Context, redisURL string, store *EventStore, 
 	}
 }
 
+// serveSSE upgrades an HTTP connection to a Server-Sent Events stream.
 func serveSSE(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -458,6 +481,7 @@ func serveSSE(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getWalletTransactions returns a wallet's event history with basic filters.
 func getWalletTransactions(store *EventStore, w http.ResponseWriter, r *http.Request) {
 	address := strings.ToLower(chi.URLParam(r, "address"))
 
@@ -505,6 +529,7 @@ func getWalletTransactions(store *EventStore, w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(events)
 }
 
+// getTransactions returns recent events across all wallets with filters.
 func getTransactions(store *EventStore, w http.ResponseWriter, r *http.Request) {
 	filter := EventFilter{
 		Limit:  50,
@@ -553,6 +578,8 @@ func getTransactions(store *EventStore, w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(events)
 }
 
+// main bootstraps the API server, wiring Redis, optional Postgres, routes, and
+// conservative HTTP server timeouts.
 func main() {
 	log.SetFormatter(&log.JSONFormatter{})
 	log.Info("starting api server")
@@ -636,6 +663,7 @@ func main() {
 
 // --- DB helpers ---
 
+// initDB creates the minimal schema if it does not already exist.
 func initDB(ctx context.Context, db *pgxpool.Pool) error {
 	_, err := db.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS events (
@@ -661,6 +689,7 @@ func initDB(ctx context.Context, db *pgxpool.Pool) error {
 	return err
 }
 
+// persistEvent stores a single event idempotently (on event_id).
 func persistEvent(ctx context.Context, db *pgxpool.Pool, ev *Event) error {
 	var slot *int64
 	if ev.Slot != nil {
@@ -693,6 +722,7 @@ func persistEvent(ctx context.Context, db *pgxpool.Pool, ev *Event) error {
 	return err
 }
 
+// getOrEmpty safely dereferences an optional string.
 func getOrEmpty(s *string) string {
 	if s == nil {
 		return ""

@@ -449,3 +449,54 @@ func TestSSESubscribeAndBroadcast(t *testing.T) {
 	}
 	hub.mu.Unlock()
 }
+
+func TestEventStoreTrimLimits(t *testing.T) {
+	// Small limits to force trimming
+	store := NewEventStore(3, 2)
+
+	// Add 5 events touching the same wallets
+	for i := 0; i < 5; i++ {
+		e := makeEvent(strconv.Itoa(i), "ALICE", "BOB", "1.0", time.Now().UTC().Format(time.RFC3339), "")
+		store.Add(e)
+	}
+
+	// Global list should be trimmed to maxTotalEvents
+	if got := len(store.GetRecent(EventFilter{Limit: 10, Offset: 0})); got > 3 {
+		t.Fatalf("expected at most 3 recent events, got %d", got)
+	}
+
+	// Per-wallet lists should be trimmed to maxEventsPerWallet
+	if got := len(store.GetByWallet("alice", EventFilter{Limit: 10, Offset: 0})); got > 2 {
+		t.Fatalf("expected at most 2 events for alice, got %d", got)
+	}
+	if got := len(store.GetByWallet("bob", EventFilter{Limit: 10, Offset: 0})); got > 2 {
+		t.Fatalf("expected at most 2 events for bob, got %d", got)
+	}
+}
+
+func TestAddressNormalizationAndLookup(t *testing.T) {
+	store := NewEventStore(100, 50)
+	ts := time.Now().UTC().Format(time.RFC3339)
+	// Mixed case addresses
+	store.Add(makeEvent("e1", "0xAbC", "0xDEF", "1.0", ts, ""))
+
+	// Look up by lower-case should find the event
+	byFrom := store.GetByWallet("0xabc", EventFilter{Limit: 10, Offset: 0})
+	if len(byFrom) == 0 {
+		t.Fatalf("expected events for lowercased from address")
+	}
+	byTo := store.GetByWallet("0xdef", EventFilter{Limit: 10, Offset: 0})
+	if len(byTo) == 0 {
+		t.Fatalf("expected events for lowercased to address")
+	}
+}
+
+func TestGetOrEmpty(t *testing.T) {
+	if got := getOrEmpty(nil); got != "" {
+		t.Fatalf("expected empty string for nil, got %q", got)
+	}
+	s := "x"
+	if got := getOrEmpty(&s); got != "x" {
+		t.Fatalf("expected 'x', got %q", got)
+	}
+}

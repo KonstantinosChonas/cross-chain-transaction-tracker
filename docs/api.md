@@ -1,4 +1,4 @@
-# API contract & Event Schema
+# API Contract and Event Schema
 
 ## High-level integration decision
 
@@ -6,7 +6,7 @@ Phase A suggests: **Rust emits normalized JSON** to stdout or publisher. For Pha
 
 ---
 
-## REST endpoints (Go API)
+## REST Endpoints (Go API)
 
 ### Health
 
@@ -18,6 +18,12 @@ Response: `200 OK` body: `OK`
 `GET /wallet/{address}/transactions`
 Query params: `chain` (optional), `limit` (optional, default 50), `offset` (optional)
 Response: JSON array of normalized events (see schema)
+
+Example:
+
+```
+GET /wallet/0xabc.../transactions?chain=ethereum&token=USDC&limit=25
+```
 
 ### Get recent transactions
 
@@ -36,7 +42,7 @@ Query params: `chain`, `token`, `from`, `to`, `min_value`, `start_time`, `end_ti
 
 Fields (all fields present where applicable):
 
-```json
+````json
 {
   "event_id": "string", // generated id (chain+tx_hash)
   "chain": "ethereum", // e.g. "ethereum", "solana"
@@ -62,4 +68,26 @@ Fields (all fields present where applicable):
     "watchlist_match": true
   }
 }
+
+Example response:
+
+```json
+[
+  {
+    "event_id": "eth:0x...",
+    "chain": "ethereum",
+    "network": "sepolia",
+    "tx_hash": "0x...",
+    "timestamp": "2025-10-14T12:34:56Z",
+    "from": "0x...",
+    "to": "0x...",
+    "value": "1000000000000000000",
+    "event_type": "transfer",
+    "token": null
+  }
+]
+````
+
+```
+
 ```

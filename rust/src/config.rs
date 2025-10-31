@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use dotenvy::dotenv;
 
+/// Runtime configuration for the listener service loaded from environment.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub eth_rpc_url: String,
@@ -17,6 +18,9 @@ pub struct Config {
 }
 
 impl Config {
+    /// Load configuration from environment variables, optionally reading a
+    /// `.env` file for missing values. Required keys will produce an error
+    /// if not present. Optional lists accept comma‑separated values.
     pub fn from_env() -> Result<Self> {
         // Prefer existing environment variables set by the process. Only
         // load a .env file if a required variable is missing. This avoids

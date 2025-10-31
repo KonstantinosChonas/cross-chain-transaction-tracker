@@ -1,4 +1,4 @@
-# Chaos Testing and Failure Injection
+# Chaos testing and failure injection
 
 This document describes how to run chaos tests that simulate network failures, RPC disconnects, broker restarts, and service restarts, and how the system should recover.
 

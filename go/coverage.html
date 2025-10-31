@@ -1,0 +1,843 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>api: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/KonstantinosChonas/cross-chain-tracker/go/cmd/api/main.go (38.3%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">// Package main contains the HTTP API for the Cross-Chain Transaction Tracker.
+//
+// It ingests normalized events from Redis Pub/Sub, optionally persists them to
+// Postgres for durability and idempotency, and exposes REST endpoints and an
+// SSE feed for clients to query or subscribe to live updates.
+package main
+
+import (
+        "context"
+        "encoding/json"
+        "fmt"
+        "net/http"
+        "os"
+        "strconv"
+        "strings"
+        "sync"
+        "time"
+
+        "github.com/go-chi/chi/v5"
+        "github.com/go-redis/redis/v8"
+        "github.com/jackc/pgx/v5/pgxpool"
+        log "github.com/sirupsen/logrus"
+)
+
+const (
+        maxEvents          = 1000
+        maxEventsPerWallet = 100
+)
+
+type Health struct {
+        Status string `json:"status"`
+}
+
+// Token describes an ERC-20 or SPL token when the event pertains to a token
+// transfer. Fields are omitted if the event is a native transfer.
+type Token struct {
+        Address  string `json:"address"`
+        Symbol   string `json:"symbol"`
+        Decimals uint8  `json:"decimals"`
+}
+
+// Event is the normalized, chain-agnostic representation of a transaction
+// event emitted by the listener and served by this API.
+type Event struct {
+        EventID   string  `json:"event_id"`
+        Chain     string  `json:"chain"`
+        Network   string  `json:"network"`
+        TxHash    string  `json:"tx_hash"`
+        Timestamp string  `json:"timestamp"`
+        From      string  `json:"from"`
+        To        string  `json:"to"`
+        Value     string  `json:"value"`
+        EventType string  `json:"event_type"`
+        Slot      *uint64 `json:"slot,omitempty"`
+        Token     *Token  `json:"token,omitempty"`
+}
+
+// EventFilter holds filter, sort, and pagination parameters for list queries.
+type EventFilter struct {
+        Chain     string
+        Token     string
+        From      string
+        To        string
+        MinValue  float64
+        StartTime *time.Time
+        EndTime   *time.Time
+        SortBy    string
+        SortOrder string
+        Limit     int
+        Offset    int
+}
+
+type EventStore struct {
+        mu                 sync.RWMutex
+        events             []*Event
+        eventsByWallet     map[string][]*Event
+        maxTotalEvents     int
+        maxEventsPerWallet int
+        db                 *pgxpool.Pool
+}
+
+// NewEventStore constructs an in-memory store with soft limits for total
+// events and per-wallet history. It can be augmented with a Postgres backend
+// via AttachDB for durability.
+func NewEventStore(maxTotalEvents, maxEventsPerWallet int) *EventStore <span class="cov2" title="5">{
+        return &amp;EventStore{
+                events:             make([]*Event, 0),
+                eventsByWallet:     make(map[string][]*Event),
+                maxTotalEvents:     maxTotalEvents,
+                maxEventsPerWallet: maxEventsPerWallet,
+        }
+}</span>
+
+// AttachDB connects the store to a Postgres pool to persist events and serve
+// queries from durable storage.
+func (s *EventStore) AttachDB(db *pgxpool.Pool) <span class="cov0" title="0">{
+        s.db = db
+}</span>
+
+// Add inserts an event into the in-memory indexes. Addresses are normalized to
+// lowercase for case-insensitive lookups. Oldest entries are trimmed when
+// limits are exceeded.
+func (s *EventStore) Add(event *Event) <span class="cov7" title="10013">{
+        s.mu.Lock()
+        defer s.mu.Unlock()
+
+        // Normalize addresses to lowercase for case-insensitive lookups
+        event.From = strings.ToLower(event.From)
+        event.To = strings.ToLower(event.To)
+
+        // Add to global list and trim
+        s.events = append([]*Event{event}, s.events...)
+        if len(s.events) &gt; s.maxTotalEvents </span><span class="cov1" title="2">{
+                s.events = s.events[:s.maxTotalEvents]
+        }</span>
+
+        // Add to "from" wallet and trim
+        <span class="cov7" title="10013">fromEvents := s.eventsByWallet[event.From]
+        fromEvents = append([]*Event{event}, fromEvents...)
+        if len(fromEvents) &gt; s.maxEventsPerWallet </span><span class="cov6" title="9003">{
+                fromEvents = fromEvents[:s.maxEventsPerWallet]
+        }</span>
+        <span class="cov7" title="10013">s.eventsByWallet[event.From] = fromEvents
+
+        // Add to "to" wallet and trim
+        toEvents := s.eventsByWallet[event.To]
+        toEvents = append([]*Event{event}, toEvents...)
+        if len(toEvents) &gt; s.maxEventsPerWallet </span><span class="cov6" title="9003">{
+                toEvents = toEvents[:s.maxEventsPerWallet]
+        }</span>
+        <span class="cov7" title="10013">s.eventsByWallet[event.To] = toEvents</span>
+}
+
+type Hub struct {
+        clients    map[chan []byte]struct{}
+        register   chan chan []byte
+        unregister chan chan []byte
+        broadcast  chan []byte
+        mu         sync.Mutex
+}
+
+func (s *EventStore) GetByWallet(address string, filter EventFilter) []*Event <span class="cov7" title="10007">{
+        // If DB is attached, read from DB for persistence/idempotency
+        if s.db != nil </span><span class="cov0" title="0">{
+                ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+                defer cancel()
+
+                // Build simple query ordering by created_at desc (server-side timestamp)
+                // We intentionally keep filtering minimal to avoid complexity.
+                q := `
+                        SELECT event_id, chain, network, tx_hash, timestamp, from_addr, to_addr, value, event_type, slot,
+                                   token_address, token_symbol, token_decimals
+                        FROM events
+                        WHERE (LOWER(from_addr) = $1 OR LOWER(to_addr) = $1)
+                `
+                args := []interface{}{strings.ToLower(address)}
+                idx := 2
+                if filter.Chain != "" </span><span class="cov0" title="0">{
+                        q += fmt.Sprintf(" AND chain = $%d", idx)
+                        args = append(args, filter.Chain)
+                        idx++
+                }</span>
+                <span class="cov0" title="0">if filter.Token != "" </span><span class="cov0" title="0">{
+                        q += fmt.Sprintf(" AND token_symbol = $%d", idx)
+                        args = append(args, filter.Token)
+                        idx++
+                }</span>
+                <span class="cov0" title="0">if filter.From != "" </span><span class="cov0" title="0">{
+                        q += fmt.Sprintf(" AND LOWER(from_addr) = $%d", idx)
+                        args = append(args, strings.ToLower(filter.From))
+                        idx++
+                }</span>
+                <span class="cov0" title="0">if filter.To != "" </span><span class="cov0" title="0">{
+                        q += fmt.Sprintf(" AND LOWER(to_addr) = $%d", idx)
+                        args = append(args, strings.ToLower(filter.To))
+                        idx++
+                }</span>
+                // Order and paginate using created_at for stability
+                <span class="cov0" title="0">q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+                if filter.Limit == 0 </span><span class="cov0" title="0">{
+                        filter.Limit = 50
+                }</span>
+                <span class="cov0" title="0">args = append(args, filter.Limit, filter.Offset)
+
+                rows, err := s.db.Query(ctx, q, args...)
+                if err != nil </span><span class="cov0" title="0">{
+                        log.WithError(err).Warn("db query failed; falling back to in-memory")
+                }</span> else<span class="cov0" title="0"> {
+                        defer rows.Close()
+                        out := make([]*Event, 0)
+                        for rows.Next() </span><span class="cov0" title="0">{
+                                var ev Event
+                                var slot *int64
+                                var tokAddr, tokSym *string
+                                var tokDec *int32
+                                if err := rows.Scan(&amp;ev.EventID, &amp;ev.Chain, &amp;ev.Network, &amp;ev.TxHash, &amp;ev.Timestamp,
+                                        &amp;ev.From, &amp;ev.To, &amp;ev.Value, &amp;ev.EventType, &amp;slot, &amp;tokAddr, &amp;tokSym, &amp;tokDec); err != nil </span><span class="cov0" title="0">{
+                                        log.WithError(err).Warn("db scan failed")
+                                        continue</span>
+                                }
+                                <span class="cov0" title="0">if slot != nil </span><span class="cov0" title="0">{
+                                        // G115: Safe conversion - values from DB are already validated
+                                        if *slot &lt; 0 </span><span class="cov0" title="0">{
+                                                log.Warnf("negative slot value in DB: %d", *slot)
+                                                continue</span>
+                                        }
+                                        <span class="cov0" title="0">s := uint64(*slot)
+                                        ev.Slot = &amp;s</span>
+                                }
+                                <span class="cov0" title="0">if tokAddr != nil || tokSym != nil || tokDec != nil </span><span class="cov0" title="0">{
+                                        ev.Token = &amp;Token{Address: getOrEmpty(tokAddr), Symbol: getOrEmpty(tokSym)}
+                                        if tokDec != nil </span><span class="cov0" title="0">{
+                                                // G115: Safe conversion - decimals validated at persistence
+                                                if *tokDec &lt; 0 || *tokDec &gt; 255 </span><span class="cov0" title="0">{
+                                                        log.Warnf("invalid token decimals in DB: %d", *tokDec)
+                                                }</span> else<span class="cov0" title="0"> {
+                                                        ev.Token.Decimals = uint8(*tokDec)
+                                                }</span>
+                                        }
+                                }
+                                <span class="cov0" title="0">out = append(out, &amp;ev)</span>
+                        }
+                        <span class="cov0" title="0">return out</span>
+                }
+        }
+
+        // Fallback: in-memory filtering (legacy)
+        <span class="cov7" title="10007">s.mu.RLock()
+        defer s.mu.RUnlock()
+
+        var filteredEvents []*Event
+        for _, event := range s.eventsByWallet[address] </span><span class="cov10" title="932550">{
+                if filter.Chain != "" &amp;&amp; event.Chain != filter.Chain </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+                <span class="cov10" title="932550">if filter.Token != "" &amp;&amp; (event.Token == nil || event.Token.Symbol != filter.Token) </span><span class="cov1" title="1">{
+                        continue</span>
+                }
+                <span class="cov9" title="932549">if filter.From != "" &amp;&amp; event.From != filter.From </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+                <span class="cov9" title="932549">if filter.To != "" &amp;&amp; event.To != filter.To </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+                <span class="cov9" title="932549">if filter.MinValue &gt; 0 </span><span class="cov1" title="2">{
+                        if val, err := strconv.ParseFloat(event.Value, 64); err == nil </span><span class="cov1" title="2">{
+                                if val &lt; filter.MinValue </span><span class="cov1" title="1">{
+                                        continue</span>
+                                }
+                        }
+                }
+                <span class="cov9" title="932548">filteredEvents = append(filteredEvents, event)</span>
+        }
+
+        <span class="cov7" title="10007">if filter.Offset &gt;= len(filteredEvents) </span><span class="cov0" title="0">{
+                return []*Event{}
+        }</span>
+        <span class="cov7" title="10007">end := filter.Offset + filter.Limit
+        if end &gt; len(filteredEvents) </span><span class="cov2" title="6">{
+                end = len(filteredEvents)
+        }</span>
+        <span class="cov7" title="10007">return filteredEvents[filter.Offset:end]</span>
+}
+
+func (s *EventStore) GetRecent(filter EventFilter) []*Event <span class="cov7" title="10002">{
+        if s.db != nil </span><span class="cov0" title="0">{
+                ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+                defer cancel()
+
+                q := `
+                        SELECT event_id, chain, network, tx_hash, timestamp, from_addr, to_addr, value, event_type, slot,
+                                   token_address, token_symbol, token_decimals
+                        FROM events
+                        WHERE 1=1
+                `
+                args := []interface{}{}
+                idx := 1
+                if filter.Chain != "" </span><span class="cov0" title="0">{
+                        q += fmt.Sprintf(" AND chain = $%d", idx)
+                        args = append(args, filter.Chain)
+                        idx++
+                }</span>
+                <span class="cov0" title="0">if filter.Token != "" </span><span class="cov0" title="0">{
+                        q += fmt.Sprintf(" AND token_symbol = $%d", idx)
+                        args = append(args, filter.Token)
+                        idx++
+                }</span>
+                <span class="cov0" title="0">if filter.From != "" </span><span class="cov0" title="0">{
+                        q += fmt.Sprintf(" AND LOWER(from_addr) = $%d", idx)
+                        args = append(args, strings.ToLower(filter.From))
+                        idx++
+                }</span>
+                <span class="cov0" title="0">if filter.To != "" </span><span class="cov0" title="0">{
+                        q += fmt.Sprintf(" AND LOWER(to_addr) = $%d", idx)
+                        args = append(args, strings.ToLower(filter.To))
+                        idx++
+                }</span>
+                // Order by created_at desc for recency
+                <span class="cov0" title="0">q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
+                if filter.Limit == 0 </span><span class="cov0" title="0">{
+                        filter.Limit = 50
+                }</span>
+                <span class="cov0" title="0">args = append(args, filter.Limit, filter.Offset)
+
+                rows, err := s.db.Query(ctx, q, args...)
+                if err == nil </span><span class="cov0" title="0">{
+                        defer rows.Close()
+                        out := make([]*Event, 0)
+                        for rows.Next() </span><span class="cov0" title="0">{
+                                var ev Event
+                                var slot *int64
+                                var tokAddr, tokSym *string
+                                var tokDec *int32
+                                if err := rows.Scan(&amp;ev.EventID, &amp;ev.Chain, &amp;ev.Network, &amp;ev.TxHash, &amp;ev.Timestamp,
+                                        &amp;ev.From, &amp;ev.To, &amp;ev.Value, &amp;ev.EventType, &amp;slot, &amp;tokAddr, &amp;tokSym, &amp;tokDec); err != nil </span><span class="cov0" title="0">{
+                                        log.WithError(err).Warn("db scan failed")
+                                        continue</span>
+                                }
+                                <span class="cov0" title="0">if slot != nil </span><span class="cov0" title="0">{
+                                        // G115: Safe conversion - values from DB are already validated
+                                        if *slot &lt; 0 </span><span class="cov0" title="0">{
+                                                log.Warnf("negative slot value in DB: %d", *slot)
+                                                continue</span>
+                                        }
+                                        <span class="cov0" title="0">s := uint64(*slot)
+                                        ev.Slot = &amp;s</span>
+                                }
+                                <span class="cov0" title="0">if tokAddr != nil || tokSym != nil || tokDec != nil </span><span class="cov0" title="0">{
+                                        ev.Token = &amp;Token{Address: getOrEmpty(tokAddr), Symbol: getOrEmpty(tokSym)}
+                                        if tokDec != nil </span><span class="cov0" title="0">{
+                                                // G115: Safe conversion - decimals validated at persistence
+                                                if *tokDec &lt; 0 || *tokDec &gt; 255 </span><span class="cov0" title="0">{
+                                                        log.Warnf("invalid token decimals in DB: %d", *tokDec)
+                                                }</span> else<span class="cov0" title="0"> {
+                                                        ev.Token.Decimals = uint8(*tokDec)
+                                                }</span>
+                                        }
+                                }
+                                <span class="cov0" title="0">out = append(out, &amp;ev)</span>
+                        }
+                        <span class="cov0" title="0">return out</span>
+                }
+        }
+
+        // Fallback in-memory
+        <span class="cov7" title="10002">s.mu.RLock()
+        defer s.mu.RUnlock()
+        filteredEvents := make([]*Event, len(s.events))
+        copy(filteredEvents, s.events)
+        if filter.Offset &gt;= len(filteredEvents) </span><span class="cov0" title="0">{
+                return []*Event{}
+        }</span>
+        <span class="cov7" title="10002">end := filter.Offset + filter.Limit
+        if end &gt; len(filteredEvents) </span><span class="cov1" title="1">{
+                end = len(filteredEvents)
+        }</span>
+        <span class="cov7" title="10002">return filteredEvents[filter.Offset:end]</span>
+}
+
+// NewHub creates a simple in-process broadcaster for Server-Sent Events.
+func NewHub() *Hub <span class="cov1" title="1">{
+        return &amp;Hub{
+                clients:    make(map[chan []byte]struct{}),
+                register:   make(chan chan []byte),
+                unregister: make(chan chan []byte),
+                broadcast:  make(chan []byte),
+        }
+}</span>
+
+// Run processes registrations and broadcasts for all connected SSE clients.
+func (h *Hub) Run() <span class="cov1" title="1">{
+        for </span><span class="cov2" title="5">{
+                select </span>{
+                case client := &lt;-h.register:<span class="cov1" title="1">
+                        h.mu.Lock()
+                        h.clients[client] = struct{}{}
+                        h.mu.Unlock()
+                        log.Info("client registered")</span>
+                case client := &lt;-h.unregister:<span class="cov1" title="2">
+                        h.mu.Lock()
+                        if _, ok := h.clients[client]; ok </span><span class="cov1" title="1">{
+                                delete(h.clients, client)
+                                close(client)
+                                log.Info("client unregistered")
+                        }</span>
+                        <span class="cov1" title="2">h.mu.Unlock()</span>
+                case message := &lt;-h.broadcast:<span class="cov1" title="1">
+                        h.mu.Lock()
+                        for client := range h.clients </span><span class="cov1" title="1">{
+                                select </span>{
+                                case client &lt;- message:<span class="cov1" title="1"></span>
+                                default:<span class="cov0" title="0">
+                                        close(client)
+                                        delete(h.clients, client)</span>
+                                }
+                        }
+                        <span class="cov1" title="1">h.mu.Unlock()</span>
+                }
+        }
+}
+
+// healthHandler returns a simple JSON health status.
+func healthHandler(w http.ResponseWriter, r *http.Request) <span class="cov1" title="1">{
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusOK)
+        _ = json.NewEncoder(w).Encode(Health{Status: "OK"})
+}</span>
+
+// subscribeToEvents consumes the Redis Pub/Sub channel and forwards events to
+// the in-memory store, the optional database, and the SSE hub.
+func subscribeToEvents(ctx context.Context, redisURL string, store *EventStore, hub *Hub) <span class="cov0" title="0">{
+        opt, err := redis.ParseURL(redisURL)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Fatalf("could not parse redis url: %v", err)
+        }</span>
+
+        <span class="cov0" title="0">rdb := redis.NewClient(opt)
+        pubsub := rdb.Subscribe(ctx, "cross_chain_events")
+        defer pubsub.Close()
+
+        ch := pubsub.Channel()
+
+        log.Info("subscribing to cross_chain_events")
+
+        for msg := range ch </span><span class="cov0" title="0">{
+                var event Event
+                if err := json.Unmarshal([]byte(msg.Payload), &amp;event); err != nil </span><span class="cov0" title="0">{
+                        log.WithError(err).Error("could not unmarshal event")
+                        continue</span>
+                }
+                <span class="cov0" title="0">log.Infof("received event: %+v", event)
+
+                // Attempt to persist to DB first (idempotent on event_id)
+                if store.db != nil </span><span class="cov0" title="0">{
+                        if err := persistEvent(ctx, store.db, &amp;event); err != nil </span><span class="cov0" title="0">{
+                                log.WithError(err).Warn("failed to persist event to db")
+                        }</span>
+                }
+
+                // Always add to in-memory cache for SSE and fast reads
+                <span class="cov0" title="0">store.Add(&amp;event)
+                hub.broadcast &lt;- []byte(msg.Payload)</span>
+        }
+}
+
+// serveSSE upgrades an HTTP connection to a Server-Sent Events stream.
+func serveSSE(hub *Hub, w http.ResponseWriter, r *http.Request) <span class="cov1" title="1">{
+        w.Header().Set("Content-Type", "text/event-stream")
+        w.Header().Set("Cache-Control", "no-cache")
+        w.Header().Set("Connection", "keep-alive")
+        w.Header().Set("Access-Control-Allow-Origin", "*")
+
+        messageChan := make(chan []byte)
+        hub.register &lt;- messageChan
+        defer func() </span><span class="cov1" title="1">{
+                hub.unregister &lt;- messageChan
+        }</span>()
+
+        <span class="cov1" title="1">notify := r.Context().Done()
+        go func() </span><span class="cov1" title="1">{
+                &lt;-notify
+                hub.unregister &lt;- messageChan
+        }</span>()
+
+        <span class="cov1" title="1">for </span><span class="cov1" title="2">{
+                select </span>{
+                case message, ok := &lt;-messageChan:<span class="cov1" title="2">
+                        if !ok </span><span class="cov1" title="1">{
+                                return
+                        }</span>
+                        <span class="cov1" title="1">fmt.Fprintf(w, "data: %s\n\n", message)
+                        if f, ok := w.(http.Flusher); ok </span><span class="cov1" title="1">{
+                                f.Flush()
+                        }</span>
+                case &lt;-time.After(30 * time.Second):<span class="cov0" title="0"> // Keep-alive
+                        fmt.Fprintf(w, ": keep-alive\n\n")
+                        if f, ok := w.(http.Flusher); ok </span><span class="cov0" title="0">{
+                                f.Flush()
+                        }</span>
+                }
+        }
+}
+
+// getWalletTransactions returns a wallet's event history with basic filters.
+func getWalletTransactions(store *EventStore, w http.ResponseWriter, r *http.Request) <span class="cov1" title="3">{
+        address := strings.ToLower(chi.URLParam(r, "address"))
+
+        filter := EventFilter{
+                Limit:  50,
+                Offset: 0,
+        }
+
+        if limitStr := r.URL.Query().Get("limit"); limitStr != "" </span><span class="cov1" title="1">{
+                if limit, err := strconv.Atoi(limitStr); err == nil </span><span class="cov1" title="1">{
+                        filter.Limit = limit
+                }</span>
+        }
+        <span class="cov1" title="3">if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" </span><span class="cov0" title="0">{
+                if offset, err := strconv.Atoi(offsetStr); err == nil </span><span class="cov0" title="0">{
+                        filter.Offset = offset
+                }</span>
+        }
+
+        <span class="cov1" title="3">filter.Chain = r.URL.Query().Get("chain")
+        filter.Token = r.URL.Query().Get("token")
+        filter.From = r.URL.Query().Get("from")
+        filter.To = r.URL.Query().Get("to")
+
+        if minValueStr := r.URL.Query().Get("min_value"); minValueStr != "" </span><span class="cov1" title="1">{
+                if minValue, err := strconv.ParseFloat(minValueStr, 64); err == nil </span><span class="cov1" title="1">{
+                        filter.MinValue = minValue
+                }</span>
+        }
+
+        <span class="cov1" title="3">if startTimeStr := r.URL.Query().Get("start_time"); startTimeStr != "" </span><span class="cov0" title="0">{
+                if startTime, err := time.Parse(time.RFC3339, startTimeStr); err == nil </span><span class="cov0" title="0">{
+                        filter.StartTime = &amp;startTime
+                }</span>
+        }
+
+        <span class="cov1" title="3">if endTimeStr := r.URL.Query().Get("end_time"); endTimeStr != "" </span><span class="cov0" title="0">{
+                if endTime, err := time.Parse(time.RFC3339, endTimeStr); err == nil </span><span class="cov0" title="0">{
+                        filter.EndTime = &amp;endTime
+                }</span>
+        }
+
+        <span class="cov1" title="3">events := store.GetByWallet(address, filter)
+        w.Header().Set("Content-Type", "application/json")
+        _ = json.NewEncoder(w).Encode(events)</span>
+}
+
+// getTransactions returns recent events across all wallets with filters.
+func getTransactions(store *EventStore, w http.ResponseWriter, r *http.Request) <span class="cov1" title="1">{
+        filter := EventFilter{
+                Limit:  50,
+                Offset: 0,
+        }
+
+        if limitStr := r.URL.Query().Get("limit"); limitStr != "" </span><span class="cov1" title="1">{
+                if limit, err := strconv.Atoi(limitStr); err == nil </span><span class="cov1" title="1">{
+                        filter.Limit = limit
+                }</span>
+        }
+        <span class="cov1" title="1">if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" </span><span class="cov1" title="1">{
+                if offset, err := strconv.Atoi(offsetStr); err == nil </span><span class="cov1" title="1">{
+                        filter.Offset = offset
+                }</span>
+        }
+
+        <span class="cov1" title="1">filter.Chain = r.URL.Query().Get("chain")
+        filter.Token = r.URL.Query().Get("token")
+        filter.From = r.URL.Query().Get("from")
+        filter.To = r.URL.Query().Get("to")
+
+        if minValueStr := r.URL.Query().Get("min_value"); minValueStr != "" </span><span class="cov0" title="0">{
+                if minValue, err := strconv.ParseFloat(minValueStr, 64); err == nil </span><span class="cov0" title="0">{
+                        filter.MinValue = minValue
+                }</span>
+        }
+
+        <span class="cov1" title="1">if startTimeStr := r.URL.Query().Get("start_time"); startTimeStr != "" </span><span class="cov0" title="0">{
+                if startTime, err := time.Parse(time.RFC3339, startTimeStr); err == nil </span><span class="cov0" title="0">{
+                        filter.StartTime = &amp;startTime
+                }</span>
+        }
+
+        <span class="cov1" title="1">if endTimeStr := r.URL.Query().Get("end_time"); endTimeStr != "" </span><span class="cov0" title="0">{
+                if endTime, err := time.Parse(time.RFC3339, endTimeStr); err == nil </span><span class="cov0" title="0">{
+                        filter.EndTime = &amp;endTime
+                }</span>
+        }
+
+        <span class="cov1" title="1">filter.SortBy = r.URL.Query().Get("sort_by")
+        filter.SortOrder = r.URL.Query().Get("sort_order")
+
+        events := store.GetRecent(filter)
+        w.Header().Set("Content-Type", "application/json")
+        _ = json.NewEncoder(w).Encode(events)</span>
+}
+
+// main bootstraps the API server, wiring Redis, optional Postgres, routes, and
+// conservative HTTP server timeouts.
+func main() <span class="cov0" title="0">{
+        log.SetFormatter(&amp;log.JSONFormatter{})
+        log.Info("starting api server")
+
+        redisURL := os.Getenv("REDIS_URL")
+        if redisURL == "" </span><span class="cov0" title="0">{
+                log.Fatalf("REDIS_URL must be set")
+        }</span>
+
+        <span class="cov0" title="0">store := NewEventStore(maxEvents, maxEventsPerWallet)
+        // Optional Postgres backing for persistence
+        if dsn := os.Getenv("POSTGRES_DSN"); dsn != "" </span><span class="cov0" title="0">{
+                db, err := pgxpool.New(context.Background(), dsn)
+                if err != nil </span><span class="cov0" title="0">{
+                        log.WithError(err).Warn("failed to connect to postgres; running in memory-only mode")
+                }</span> else<span class="cov0" title="0"> {
+                        if err := initDB(context.Background(), db); err != nil </span><span class="cov0" title="0">{
+                                log.WithError(err).Warn("failed to init db schema; running in memory-only mode")
+                        }</span> else<span class="cov0" title="0"> {
+                                store.AttachDB(db)
+                                log.Info("api: connected to postgres and initialized schema")
+                        }</span>
+                }
+        }
+        <span class="cov0" title="0">hub := NewHub()
+        go hub.Run()
+
+        go subscribeToEvents(context.Background(), redisURL, store, hub)
+
+        r := chi.NewRouter()
+        r.Get("/health", healthHandler)
+        r.Get("/events/subscribe", func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                serveSSE(hub, w, r)
+        }</span>)
+        <span class="cov0" title="0">r.Get("/wallet/{address}/transactions", func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                getWalletTransactions(store, w, r)
+        }</span>)
+        <span class="cov0" title="0">r.Get("/transactions", func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                getTransactions(store, w, r)
+        }</span>)
+
+        // Test endpoint - only enabled in test mode
+        <span class="cov0" title="0">if os.Getenv("TEST_MODE") == "true" </span><span class="cov0" title="0">{
+                r.Get("/internal/last-received", func(w http.ResponseWriter, r *http.Request) </span><span class="cov0" title="0">{
+                        limit := 1
+                        if limitStr := r.URL.Query().Get("limit"); limitStr != "" </span><span class="cov0" title="0">{
+                                if l, err := strconv.Atoi(limitStr); err == nil &amp;&amp; l &gt; 0 </span><span class="cov0" title="0">{
+                                        limit = l
+                                }</span>
+                        }
+
+                        <span class="cov0" title="0">filter := EventFilter{
+                                Limit:  limit,
+                                Offset: 0,
+                        }
+                        events := store.GetRecent(filter)
+                        w.Header().Set("Content-Type", "application/json")
+                        _ = json.NewEncoder(w).Encode(events)</span>
+                })
+        }
+
+        <span class="cov0" title="0">bindAddr := os.Getenv("BIND_ADDR")
+        if bindAddr == "" </span><span class="cov0" title="0">{
+                bindAddr = "0.0.0.0:8080"
+        }</span>
+
+        // Create HTTP server with timeouts to prevent resource exhaustion (fixes G114)
+        <span class="cov0" title="0">server := &amp;http.Server{
+                Addr:              bindAddr,
+                Handler:           r,
+                ReadTimeout:       15 * time.Second,
+                ReadHeaderTimeout: 10 * time.Second,
+                WriteTimeout:      15 * time.Second,
+                IdleTimeout:       60 * time.Second,
+                MaxHeaderBytes:    1 &lt;&lt; 20, // 1 MB
+        }
+
+        log.Infof("api: listening on %s", bindAddr)
+        log.Fatalf("server failed to start: %v", server.ListenAndServe())</span>
+}
+
+// --- DB helpers ---
+
+// initDB creates the minimal schema if it does not already exist.
+func initDB(ctx context.Context, db *pgxpool.Pool) error <span class="cov0" title="0">{
+        _, err := db.Exec(ctx, `
+                CREATE TABLE IF NOT EXISTS events (
+                        event_id TEXT PRIMARY KEY,
+                        chain TEXT NOT NULL,
+                        network TEXT NOT NULL,
+                        tx_hash TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        from_addr TEXT NOT NULL,
+                        to_addr TEXT NOT NULL,
+                        value TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        slot BIGINT NULL,
+                        token_address TEXT NULL,
+                        token_symbol TEXT NULL,
+                        token_decimals INT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_events_from ON events (LOWER(from_addr));
+                CREATE INDEX IF NOT EXISTS idx_events_to ON events (LOWER(to_addr));
+                CREATE INDEX IF NOT EXISTS idx_events_created ON events (created_at DESC);
+        `)
+        return err
+}</span>
+
+// persistEvent stores a single event idempotently (on event_id).
+func persistEvent(ctx context.Context, db *pgxpool.Pool, ev *Event) error <span class="cov0" title="0">{
+        var slot *int64
+        if ev.Slot != nil </span><span class="cov0" title="0">{
+                // G115: Safe conversion - Solana slots fit in int64 range
+                if *ev.Slot &gt; uint64(^uint64(0)&gt;&gt;1) </span><span class="cov0" title="0">{
+                        return fmt.Errorf("slot value too large: %d", *ev.Slot)
+                }</span>
+                <span class="cov0" title="0">tmp := int64(*ev.Slot)
+                slot = &amp;tmp</span>
+        }
+        <span class="cov0" title="0">var tokAddr, tokSym *string
+        var tokDec *int32
+        if ev.Token != nil </span><span class="cov0" title="0">{
+                ta := ev.Token.Address
+                ts := ev.Token.Symbol
+                // G115: Safe conversion - decimals are bounded by ERC20/SPL token standards (max 255)
+                td := int32(ev.Token.Decimals)
+                tokAddr = &amp;ta
+                tokSym = &amp;ts
+                tokDec = &amp;td
+        }</span>
+        <span class="cov0" title="0">_, err := db.Exec(ctx, `
+                INSERT INTO events (event_id, chain, network, tx_hash, timestamp, from_addr, to_addr, value, event_type, slot, token_address, token_symbol, token_decimals)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                ON CONFLICT (event_id) DO NOTHING
+        `,
+                ev.EventID, ev.Chain, ev.Network, ev.TxHash, ev.Timestamp,
+                ev.From, ev.To, ev.Value, ev.EventType, slot, tokAddr, tokSym, tokDec,
+        )
+        return err</span>
+}
+
+// getOrEmpty safely dereferences an optional string.
+func getOrEmpty(s *string) string <span class="cov1" title="2">{
+        if s == nil </span><span class="cov1" title="1">{
+                return ""
+        }</span>
+        <span class="cov1" title="1">return *s</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

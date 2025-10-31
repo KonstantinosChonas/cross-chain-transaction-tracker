@@ -135,4 +135,32 @@ mod tests {
         let res = fut.await.unwrap();
         assert!(res.is_err());
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_retry_with_zero_attempts_runs_once() {
+        tokio::time::pause();
+
+        let attempts = 0;
+        let base = Duration::from_millis(5);
+        let factor = 2.0;
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = counter.clone();
+
+        let op = move || {
+            let c = c.clone();
+            async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, &'static str>("ok")
+            }
+        };
+
+        let res = retry_with_backoff(attempts, base, factor, op).await;
+        assert!(res.is_ok());
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "operation should run exactly once when attempts=0"
+        );
+    }
 }

@@ -1,3 +1,10 @@
+//! Cross-chain listener service
+//!
+//! This binary monitors Ethereum and Solana for transactions touching a set of
+//! watched addresses. Events are normalized to a chain-agnostic JSON schema and
+//! published to a Redis Pub/Sub channel (`cross_chain_events`) for the Go API to
+//! consume. The listener supports both websocket subscriptions (preferred in
+//! production) and HTTP polling (useful for local testing with Anvil/Devnet).
 use anyhow::anyhow;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
@@ -24,6 +31,10 @@ mod solana_parser;
 // Include the golden test module
 mod tests;
 
+/// Publish a normalized event to Redis with retry and exponential backoff.
+///
+/// On success, returns Ok(()). On repeated failures, returns the last error
+/// and logs a structured message for operational visibility.
 async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> anyhow::Result<()> {
     use retry::retry_with_backoff;
     let payload = serde_json::to_string(event)?;
@@ -62,7 +73,10 @@ async fn publish_event_to_redis(redis_client: &redis::Client, event: &Event) -> 
     }
 }
 
-/// Fetch ERC20 token metadata (symbol and decimals) from the contract
+/// Fetch ERC‑20 token metadata (symbol and decimals) from the contract.
+///
+/// This performs raw eth_call invocations for `symbol()` and `decimals()` and
+/// tolerates non‑standard contracts by falling back to sensible defaults.
 async fn fetch_token_metadata<M: Middleware>(provider: &M, token_address: Address) -> (String, u8) {
     // Try to call symbol() - function selector 0x95d89b41
     let symbol = match provider
@@ -293,6 +307,9 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Track ERC‑20 Transfer events via websocket logs and publish matching events.
+///
+/// Filters to events where either the `from` or `to` matches the watched set.
 async fn track_erc20_transfers(
     provider: Arc<Provider<Ws>>,
     watched_addresses: Vec<Address>,
@@ -375,6 +392,10 @@ async fn track_erc20_transfers(
     Err(anyhow!("ERC-20 log stream ended"))
 }
 
+/// Track native ETH transfers by subscribing to new blocks and scanning txs.
+///
+/// This is a pragmatic approach that works across providers with websocket
+/// support and provides consistent timestamps from the block header.
 async fn track_native_transfers(
     provider: Arc<Provider<Ws>>,
     watched_addresses: Vec<Address>,
@@ -450,6 +471,8 @@ async fn track_native_transfers(
     Err(anyhow!("Native transfer block stream ended"))
 }
 
+/// HTTP polling mode for Ethereum (e.g., local Anvil). Processes new blocks
+/// since the last seen height and handles chain resets with a small lookback.
 async fn poll_eth_blocks(
     rpc_url: String,
     watched_addresses_str: Vec<String>,
@@ -541,6 +564,9 @@ async fn poll_eth_blocks(
     }
 }
 
+/// Process a single Ethereum block (native transfers and ERC‑20 logs).
+///
+/// Publishes events to Redis and updates the in‑memory deduplication state.
 async fn process_eth_block(
     provider: &Provider<Http>,
     block_num: u64,
@@ -668,6 +694,9 @@ async fn process_eth_block(
     Ok(())
 }
 
+/// Subscribe to (or rather, poll for) Solana transactions touching watched
+/// addresses and publish normalized events. Uses RPC polling to avoid
+/// compatibility issues across pubsub client versions.
 async fn subscribe_to_solana_transfers(
     ws_url: &str,
     network: &str,
@@ -745,6 +774,8 @@ async fn subscribe_to_solana_transfers(
     Ok(())
 }
 
+/// Process a single Solana transaction by signature, emitting a normalized
+/// placeholder event when the watched address is involved (native or token).
 async fn process_solana_transaction(
     rpc_client: &RpcClient,
     network: &str,
@@ -817,6 +848,8 @@ async fn process_solana_transaction(
     Ok(())
 }
 
+/// Entry point for Solana tracking. Supports websocket URLs but falls back to
+/// HTTP polling mode when necessary. Restarts on failure with a short delay.
 async fn track_solana_transfers(
     ws_url: &str,
     network: &str,
@@ -872,6 +905,8 @@ async fn track_solana_transfers(
     }
 }
 
+/// HTTP polling loop for Solana. Iterates per‑address to keep logic simple and
+/// robust across RPC versions, publishing new events as they appear.
 async fn poll_solana_transfers(
     rpc_url: &str,
     network: &str,
