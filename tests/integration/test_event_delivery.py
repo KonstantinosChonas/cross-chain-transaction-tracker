@@ -75,16 +75,20 @@ def deploy_test_contract(w3, account):
     return w3.eth.contract(address=tx_receipt.contractAddress, abi=abi)
 
 
-def wait_for_event(api_url, timeout=10):
+def wait_for_event(api_url, timeout=10, event_type="erc20_transfer"):
     """Poll the API for the expected event"""
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            resp = requests.get(f"{api_url}/internal/last-received")
+            # Request more events to find the right one
+            resp = requests.get(f"{api_url}/internal/last-received?limit=10")
             if resp.status_code == 200:
                 events = resp.json()
-                if events and len(events) > 0:
-                    return events[0]
+                if events:
+                    # Find the first event matching the event_type
+                    for event in events:
+                        if event.get("event_type") == event_type:
+                            return event
         except requests.exceptions.ConnectionError:
             pass
         time.sleep(0.5)
