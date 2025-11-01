@@ -96,6 +96,12 @@ See `docs/api.md` for full request/response examples.
 
 This project uses GitHub Actions for comprehensive CI/CD. See `TESTING.md` and `docs/test-flakiness.md`.
 
+**Workflow durations:**
+
+- PR Quick Checks & Code Coverage: ~1 minute
+- Integration and E2E Tests (manual): ~20 minutes
+- Nightly and Scheduled Tests: ~10 minutes
+
 PR requirements:
 
 - All unit tests pass (Rust + Go)

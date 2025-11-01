@@ -55,7 +55,7 @@ Add these secrets in `Settings → Secrets and variables → Actions`:
 
 **File:** `pr-checks.yml`  
 **Triggers:** Pull requests, pushes to main/develop  
-**Duration:** ~5-10 minutes
+**Duration:** ~1 minute
 
 **What it does:**
 
@@ -71,7 +71,7 @@ Add these secrets in `Settings → Secrets and variables → Actions`:
 
 **File:** `integration-e2e.yml`  
 **Triggers:** Pushes to main/release, PRs, manual  
-**Duration:** ~30-60 minutes
+**Duration:** ~20 minutes
 
 **What it does:**
 
@@ -87,7 +87,7 @@ Add these secrets in `Settings → Secrets and variables → Actions`:
 
 **File:** `coverage.yml`  
 **Triggers:** Pushes, PRs, manual  
-**Duration:** ~10-15 minutes
+**Duration:** ~1 minute
 
 **What it does:**
 
@@ -103,7 +103,7 @@ Add these secrets in `Settings → Secrets and variables → Actions`:
 
 **File:** `nightly.yml`  
 **Triggers:** Daily at 2 AM UTC, manual  
-**Duration:** ~60+ minutes
+**Duration:** ~10 minutes
 
 **What it does:**
 
